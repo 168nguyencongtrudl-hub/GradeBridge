@@ -217,6 +217,7 @@ export function ExamBankModal({
   const [tab, setTab] = useState<'list' | 'create'>('list');
   const [schoolFilter, setSchoolFilter] = useState<string>('ALL');
 
+  const [templateProfileId, setTemplateProfileId] = useState<string>(selectedProfileId || examProfiles[0]?.id || '');
   const [schoolName, setSchoolName] = useState('');
   const [gradeName, setGradeName] = useState('');
   const [classLabel, setClassLabel] = useState('');
@@ -230,6 +231,27 @@ export function ExamBankModal({
   const [sourceFileName, setSourceFileName] = useState('');
   const [answerKeyImages, setAnswerKeyImages] = useState<string[]>([]);
   const [isProcessing, setIsProcessing] = useState(false);
+
+  const countProfileImages = (prof: ExamProfile): number => {
+    let total = 0;
+    for (const pt of prof.parts || []) {
+      if (pt.sceneImageDataUrl) total += 1;
+      for (const tg of pt.targets || []) if (tg.imageDataUrl) total += 1;
+      for (const it of pt.items || []) if (it.imageDataUrl) total += 1;
+    }
+    return total;
+  };
+
+  const applyTemplateToForm = (prof: ExamProfile) => {
+    setTemplateProfileId(prof.id);
+    setSchoolName(prof.schoolName || 'TH Nguyễn Bỉnh Khiêm');
+    setGradeName(prof.gradeName || '');
+    setClassLabel('');
+    setExamTitle(prof.examTitle || '');
+    setExamLevel(prof.examLevel || 'Cambridge Pre-A1 Starters');
+    setPagesPerStudent(prof.pagesPerStudent || 9);
+    setMaxScore(prof.maxScore || 10);
+  };
 
   const uniqueSchools = Array.from(
     new Set(examProfiles.map(p => (p.schoolName || '').trim() || (isEn ? 'Unassigned School' : 'Chưa phân trường')))
@@ -291,6 +313,8 @@ export function ExamBankModal({
     }
     setIsProcessing(true);
     try {
+      const chosenTemplate =
+        examProfiles.find(p => p.id === templateProfileId) || examProfiles[0] || INITIAL_EXAM_PROFILES[0];
       let extractedParts: ExamPart[] = [];
       let formattedText = answerKeyText;
 
@@ -315,20 +339,27 @@ export function ExamBankModal({
         if (res.formattedAnswerText) formattedText = res.formattedAnswerText;
       }
 
+      const templatePartsCopy: ExamPart[] = JSON.parse(
+        JSON.stringify(chosenTemplate?.parts || INITIAL_EXAM_PROFILES[0].parts)
+      );
+
       const newProfile: ExamProfile = {
         id: `profile-${Date.now()}`,
         schoolName: schoolName.trim(),
         gradeName: gradeName.trim(),
         classLabel: classLabel.trim() || undefined,
-        examTitle: examTitle.trim() || `${gradeName.trim()} - Cambridge Assessment`,
+        examTitle:
+          examTitle.trim() ||
+          chosenTemplate?.examTitle ||
+          `${gradeName.trim()} - Cambridge Assessment`,
         examLevel,
-        pagesPerStudent: Math.max(1, Number(pagesPerStudent) || 9),
-        maxScore: Math.max(1, Number(maxScore) || 10),
-        blankExamFileName: blankFileName || undefined,
-        sourceFileName: sourceFileName || 'Manual Entry',
+        pagesPerStudent: Math.max(1, Number(pagesPerStudent) || chosenTemplate?.pagesPerStudent || 9),
+        maxScore: Math.max(1, Number(maxScore) || chosenTemplate?.maxScore || 10),
+        blankExamFileName: blankFileName || chosenTemplate?.blankExamFileName || undefined,
+        sourceFileName: sourceFileName || chosenTemplate?.sourceFileName || 'Template Copy',
         updatedAt: Date.now(),
-        parts: extractedParts.length > 0 ? extractedParts : INITIAL_EXAM_PROFILES[1].parts,
-        answerKeyText: formattedText.trim() || 'Answer key'
+        parts: extractedParts.length > 0 ? extractedParts : templatePartsCopy,
+        answerKeyText: formattedText.trim() || chosenTemplate?.answerKeyText || 'Answer key'
       };
 
       await onSaveProfile(newProfile);
@@ -336,7 +367,7 @@ export function ExamBankModal({
       onNotify(
         isEn
           ? `Created "${newProfile.schoolName} · ${newProfile.gradeName}".`
-          : `Đã tạo bộ đề riêng: "${newProfile.schoolName} · ${newProfile.gradeName}".`,
+          : `Đã tạo bộ đề: "${newProfile.schoolName} · ${newProfile.gradeName}${newProfile.classLabel ? ` (Lớp ${newProfile.classLabel})` : ''}".`,
         'success'
       );
       onClose();
@@ -353,12 +384,12 @@ export function ExamBankModal({
         <div className="px-5 py-4 border-b border-neutral-200 flex items-center justify-between">
           <div>
             <h3 className="text-base font-bold text-slate-900">
-              {isEn ? 'Schools & Exam Bank' : 'Kho Đề Theo Trường & Khối Lớp'} ({examProfiles.length})
+              {isEn ? 'Schools & Exam Bank' : 'Kho Đề Mẫu Theo Trường & Khối Lớp'} ({examProfiles.length})
             </h3>
             <p className="text-xs text-slate-500">
               {isEn
-                ? 'Each school and grade/class stores its own answer sheet, key, and separate student score list.'
-                : 'Mỗi trường và khối lớp lưu riêng đề thi, phiếu in và danh sách điểm độc lập.'}
+                ? 'Each school and grade/class stores its own answer sheet, cropped illustrations, key, and separate student score list.'
+                : 'Mỗi bộ đề đã làm xong được lưu làm đề mẫu chuẩn (kèm toàn bộ hình đã cắt & đáp án) để tái sử dụng hoặc nhân bản.'}
             </p>
           </div>
           <button type="button" onClick={onClose} className="p-1.5 rounded-lg text-slate-500 hover:bg-neutral-100">
@@ -375,7 +406,7 @@ export function ExamBankModal({
                 tab === 'list' ? 'border-slate-900 text-slate-900' : 'border-transparent text-slate-500'
               }`}
             >
-              {isEn ? 'Saved by School & Grade' : 'Danh sách theo Trường & Khối'}
+              {isEn ? 'Saved Templates & Exams' : 'Kho Đề Mẫu Đã Lưu'}
             </button>
             <button
               type="button"
@@ -384,7 +415,7 @@ export function ExamBankModal({
                 tab === 'create' ? 'border-slate-900 text-slate-900' : 'border-transparent text-slate-500'
               }`}
             >
-              {isEn ? '+ New School / Grade Exam' : '+ Tạo đề Trường / Khối mới'}
+              {isEn ? '+ New / Clone from Template' : '+ Tạo mới / Nhân bản từ Đề mẫu'}
             </button>
           </div>
         )}
@@ -432,7 +463,7 @@ export function ExamBankModal({
                     <div className="flex items-center justify-between text-xs pb-1 border-b border-neutral-200">
                       <span className="font-bold text-slate-900">{group.school}</span>
                       <span className="text-slate-500 tabular-nums">
-                        {group.profiles.length} {isEn ? 'exams' : 'bộ đề'} · {schoolTotalGraded}{' '}
+                        {group.profiles.length} {isEn ? 'templates' : 'bộ đề mẫu'} · {schoolTotalGraded}{' '}
                         {isEn ? 'students' : 'bài đã lưu'}
                       </span>
                     </div>
@@ -441,6 +472,7 @@ export function ExamBankModal({
                       {group.profiles.map(prof => {
                         const count = allResults.filter(r => r.profileId === prof.id).length;
                         const qCount = (prof.parts || []).reduce((s, p) => s + (p.items?.length || 0), 0);
+                        const imgCount = countProfileImages(prof);
                         const active = prof.id === selectedProfileId;
                         return (
                           <div
@@ -450,9 +482,16 @@ export function ExamBankModal({
                             }`}
                           >
                             <div className="min-w-0">
-                              <div className="font-semibold text-sm text-slate-900 truncate">
-                                {prof.gradeName}
-                                {prof.classLabel ? ` · ${isEn ? 'Class' : 'Lớp'} ${prof.classLabel}` : ''}
+                              <div className="flex items-center gap-2">
+                                <span className="font-semibold text-sm text-slate-900 truncate">
+                                  {prof.gradeName}
+                                  {prof.classLabel ? ` · ${isEn ? 'Class' : 'Lớp'} ${prof.classLabel}` : ''}
+                                </span>
+                                {imgCount > 0 && (
+                                  <span className="px-2 py-0.5 rounded-md bg-emerald-50 border border-emerald-200 text-[10px] font-semibold text-emerald-700 shrink-0">
+                                    {isEn ? `Template (${imgCount} pics)` : `Đề mẫu (${imgCount} hình)`}
+                                  </span>
+                                )}
                               </div>
                               <div className="text-slate-600 truncate">{prof.examTitle}</div>
                               <div className="mt-0.5 text-slate-500 tabular-nums">
@@ -463,7 +502,21 @@ export function ExamBankModal({
                                 </span>
                               </div>
                             </div>
-                            <div className="flex items-center gap-2 shrink-0">
+                            <div className="flex items-center gap-1.5 shrink-0">
+                              {canManageExams && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    applyTemplateToForm(prof);
+                                    setTab('create');
+                                  }}
+                                  className="px-2.5 py-1.5 rounded-lg border border-indigo-200 bg-indigo-50/70 hover:bg-indigo-100 text-indigo-800 font-medium inline-flex items-center gap-1 whitespace-nowrap"
+                                  title={isEn ? 'Use as template for another class/school' : 'Dùng đề này làm mẫu tạo cho lớp/trường khác'}
+                                >
+                                  <Copy className="w-3.5 h-3.5" />
+                                  <span>{isEn ? 'Use Template' : 'Dùng làm mẫu'}</span>
+                                </button>
+                              )}
                               <button
                                 type="button"
                                 onClick={() => {
@@ -494,6 +547,37 @@ export function ExamBankModal({
             </>
           ) : (
             <form onSubmit={handleSaveNew} className="space-y-4">
+              <div className="p-3.5 rounded-xl border border-indigo-200 bg-indigo-50/60 space-y-2">
+                <label className="block text-indigo-950 font-semibold">
+                  {isEn
+                    ? '1. Choose Base Exam Template (keeps all cropped images & answer key if no new PDF is uploaded)'
+                    : '1. Chọn từ Đề mẫu đã làm xong (Giữ nguyên toàn bộ hình đã cắt & đáp án nếu không nạp PDF mới)'}
+                </label>
+                <select
+                  value={templateProfileId}
+                  onChange={e => {
+                    const found = examProfiles.find(p => p.id === e.target.value);
+                    if (found) {
+                      applyTemplateToForm(found);
+                    } else {
+                      setTemplateProfileId(e.target.value);
+                    }
+                  }}
+                  className="w-full px-3 py-2 rounded-lg border border-indigo-200 bg-white text-slate-900 font-medium"
+                >
+                  {examProfiles.map(prof => {
+                    const imgs = countProfileImages(prof);
+                    const qs = (prof.parts || []).reduce((s, p) => s + (p.items?.length || 0), 0);
+                    return (
+                      <option key={prof.id} value={prof.id}>
+                        {prof.schoolName ? `${prof.schoolName} · ` : ''}
+                        {prof.gradeName} — {prof.examTitle} ({qs} câu, {imgs} hình đã cắt)
+                      </option>
+                    );
+                  })}
+                </select>
+              </div>
+
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div className="sm:col-span-2">
                   <label className="block text-slate-600 font-medium mb-1">
@@ -593,12 +677,14 @@ export function ExamBankModal({
               <div className="p-4 rounded-xl border border-neutral-200 bg-neutral-50 space-y-3">
                 <div>
                   <div className="font-semibold text-slate-800">
-                    {isEn ? 'Upload Blank Exam + Answer Key (Recommended)' : 'Nạp 2 tệp: Đề trắng & Đề có đáp án (Khuyên dùng)'}
+                    {isEn
+                      ? 'Optional: Upload New Blank Exam + Answer Key (leave empty to keep selected template)'
+                      : 'Tùy chọn: Nạp Đề trắng & Đề đáp án mới (Bỏ trống nếu muốn giữ nguyên toàn bộ hình & đáp án của Đề mẫu đã chọn ở trên)'}
                   </div>
                   <p className="text-[11px] text-slate-500 mt-0.5">
                     {isEn
                       ? 'Blank exam builds complete student prompts; answer key supplies exact grading answers.'
-                      : 'Đề trắng giúp dựng phiếu in đầy đủ gợi ý; đề có đáp án giúp trích xuất đáp án chấm chính xác.'}
+                      : 'Nếu bạn chỉ muốn lấy đề mẫu vừa làm xong áp dụng cho lớp/trường khác, không cần tải lại file PDF.'}
                   </p>
                 </div>
 

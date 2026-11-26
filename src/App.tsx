@@ -768,6 +768,7 @@ export default function App() {
               canManageExams={hasPermission('canManageExams')}
               lang={isEn ? 'en' : 'vi'}
               onSaveProfile={handleSaveProfile}
+              onSelectProfile={setSelectedProfileId}
               onNotify={notify}
             />
           )}

@@ -143,14 +143,22 @@ export function loadLocalWorkspace(rawSessionCode = 'CAMBRIDGE-2026'): CloudWork
       return defaults;
     }
     const parsed = JSON.parse(raw) as Partial<CloudWorkspaceSnapshot>;
+    const existingProfiles = Array.isArray(parsed.examProfiles) ? [...parsed.examProfiles] : [];
+    // Ensure built-in templates (including Cam Khối 4 and Grade 2 G2_FT1 with cropped images) are present
+    for (const builtIn of INITIAL_EXAM_PROFILES) {
+      const idx = existingProfiles.findIndex(p => p.id === builtIn.id);
+      if (idx === -1) {
+        existingProfiles.push(JSON.parse(JSON.stringify(builtIn)));
+      } else if ((builtIn.updatedAt || 0) > (existingProfiles[idx].updatedAt || 0)) {
+        existingProfiles[idx] = JSON.parse(JSON.stringify(builtIn));
+      }
+    }
+
     return {
       ...defaults,
       ...parsed,
       sessionCode,
-      examProfiles:
-        Array.isArray(parsed.examProfiles) && parsed.examProfiles.length > 0
-          ? parsed.examProfiles
-          : defaults.examProfiles,
+      examProfiles: existingProfiles.length > 0 ? existingProfiles : defaults.examProfiles,
       allResults: Array.isArray(parsed.allResults) ? parsed.allResults : [],
       tasks: Array.isArray(parsed.tasks) ? parsed.tasks : defaults.tasks,
       teacherAccounts: Array.isArray(parsed.teacherAccounts) ? parsed.teacherAccounts : [],
@@ -214,22 +222,31 @@ export async function syncWithSharedCloud(sessionCode = 'CAMBRIDGE-2026'): Promi
   try {
     const cloud = await ensureFirestoreWorkspace(cleanCode, local);
     if (cloud) {
+      // Always merge any new or more recently updated exam profiles (including built-in templates) to Firestore
+      const cloudById = new Map(cloud.examProfiles.map(p => [p.id, p]));
+      for (const localProf of local.examProfiles) {
+        const cloudProf = cloudById.get(localProf.id);
+        if (!cloudProf) {
+          await upsertFirestoreProfile(cleanCode, localProf).catch(err =>
+            console.warn('Profile sync warning:', err)
+          );
+          cloud.examProfiles.unshift(localProf);
+          cloudById.set(localProf.id, localProf);
+        } else if ((localProf.updatedAt || 0) > (cloudProf.updatedAt || 0)) {
+          await upsertFirestoreProfile(cleanCode, localProf).catch(err =>
+            console.warn('Profile update sync warning:', err)
+          );
+          cloud.examProfiles = cloud.examProfiles.map(p => (p.id === localProf.id ? localProf : p));
+          cloudById.set(localProf.id, localProf);
+        }
+      }
+
       const seededKey = `${CLOUD_SEEDED_PREFIX}${cleanCode}`;
       const alreadySeeded =
         typeof window !== 'undefined' ? Boolean(window.localStorage.getItem(seededKey)) : true;
 
       if (!alreadySeeded && typeof window !== 'undefined') {
         window.localStorage.setItem(seededKey, '1');
-        // One-time migration of any pre-existing local records into shared Firestore
-        const cloudProfileIds = new Set(cloud.examProfiles.map(p => p.id));
-        for (const p of local.examProfiles) {
-          if (!cloudProfileIds.has(p.id)) {
-            await upsertFirestoreProfile(cleanCode, p).catch(err =>
-              console.warn('Initial profile push warning:', err)
-            );
-            cloud.examProfiles.unshift(p);
-          }
-        }
         const cloudResultIds = new Set(cloud.allResults.map(r => r.id));
         for (const r of local.allResults) {
           if (!cloudResultIds.has(r.id)) {

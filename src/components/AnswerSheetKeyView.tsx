@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
   Check,
+  Copy,
   Crop,
   Download,
   Eye,
@@ -33,6 +34,7 @@ interface AnswerSheetKeyViewProps {
   canManageExams: boolean;
   lang: UiLang;
   onSaveProfile: (profile: ExamProfile) => Promise<void>;
+  onSelectProfile?: (id: string) => void;
   onNotify: (msg: string, type?: 'info' | 'success' | 'warning' | 'error') => void;
 }
 
@@ -472,6 +474,7 @@ export function AnswerSheetKeyView({
   canManageExams,
   lang,
   onSaveProfile,
+  onSelectProfile,
   onNotify
 }: AnswerSheetKeyViewProps) {
   const isEn = lang === 'en';
@@ -497,11 +500,28 @@ export function AnswerSheetKeyView({
   const [draftGrade, setDraftGrade] = useState(currentProfile.gradeName || '');
   const [draftClass, setDraftClass] = useState(currentProfile.classLabel || '');
 
+  const [isSavingTemplate, setIsSavingTemplate] = useState(false);
+  const [showCloneForm, setShowCloneForm] = useState(false);
+  const [cloneSchool, setCloneSchool] = useState(currentProfile.schoolName || '');
+  const [cloneGrade, setCloneGrade] = useState(currentProfile.gradeName || '');
+  const [cloneClass, setCloneClass] = useState('');
+  const [cloneTitle, setCloneTitle] = useState(currentProfile.examTitle || '');
+
   useEffect(() => {
     setDraftSchool(currentProfile.schoolName || '');
     setDraftGrade(currentProfile.gradeName || '');
     setDraftClass(currentProfile.classLabel || '');
-  }, [currentProfile.id, currentProfile.schoolName, currentProfile.gradeName, currentProfile.classLabel]);
+    setCloneSchool(currentProfile.schoolName || '');
+    setCloneGrade(currentProfile.gradeName || '');
+    setCloneClass('');
+    setCloneTitle(currentProfile.examTitle || '');
+  }, [
+    currentProfile.id,
+    currentProfile.schoolName,
+    currentProfile.gradeName,
+    currentProfile.classLabel,
+    currentProfile.examTitle
+  ]);
 
   useEffect(() => {
     if (!showPreview) {
@@ -554,6 +574,64 @@ export function AnswerSheetKeyView({
 
   const totalQuestions = (currentProfile.parts || []).reduce((sum, p) => sum + (p.items?.length || 0), 0);
   const embeddedImagesCount = countEmbeddedImages(currentProfile.parts || []);
+
+  const handleSaveAsStandardTemplate = async () => {
+    setIsSavingTemplate(true);
+    try {
+      const updatedProfile: ExamProfile = {
+        ...currentProfile,
+        schoolName: draftSchool.trim() || currentProfile.schoolName,
+        gradeName: draftGrade.trim() || currentProfile.gradeName,
+        classLabel: draftClass.trim() || undefined,
+        updatedAt: Date.now()
+      };
+      await onSaveProfile(updatedProfile);
+      onNotify(
+        isEn
+          ? `Saved "${updatedProfile.gradeName}" (${embeddedImagesCount} cropped pictures, ${totalQuestions} questions) as standard shared template!`
+          : `Đã lưu bộ đề "${updatedProfile.gradeName}" (gồm ${embeddedImagesCount} hình đã cắt & ${totalQuestions} câu đáp án) làm Đề mẫu chuẩn dùng chung!`,
+        'success'
+      );
+    } catch (err: any) {
+      onNotify(err?.message || 'Không thể lưu đề mẫu.', 'error');
+    } finally {
+      setIsSavingTemplate(false);
+    }
+  };
+
+  const handleCreateClonedTemplate = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const targetSchool = cloneSchool.trim() || currentProfile.schoolName || 'TH Nguyễn Bỉnh Khiêm';
+    const targetGrade = cloneGrade.trim() || `${currentProfile.gradeName} (Bản sao)`;
+    const targetClass = cloneClass.trim();
+    setIsSavingTemplate(true);
+    try {
+      const clonedProfile: ExamProfile = {
+        ...JSON.parse(JSON.stringify(currentProfile)),
+        id: `profile-${Date.now()}`,
+        schoolName: targetSchool,
+        gradeName: targetGrade,
+        classLabel: targetClass || undefined,
+        examTitle: cloneTitle.trim() || currentProfile.examTitle,
+        updatedAt: Date.now()
+      };
+      await onSaveProfile(clonedProfile);
+      if (onSelectProfile) {
+        onSelectProfile(clonedProfile.id);
+      }
+      setShowCloneForm(false);
+      onNotify(
+        isEn
+          ? `Cloned template to "${targetSchool} · ${targetGrade}${targetClass ? ` (${targetClass})` : ''}" with all ${embeddedImagesCount} cropped images!`
+          : `Đã nhân bản từ đề mẫu sang "${targetSchool} · ${targetGrade}${targetClass ? ` (Lớp ${targetClass})` : ''}" (giữ nguyên toàn bộ ${embeddedImagesCount} hình đã cắt & đáp án)!`,
+        'success'
+      );
+    } catch (err: any) {
+      onNotify(err?.message || 'Lỗi nhân bản đề mẫu.', 'error');
+    } finally {
+      setIsSavingTemplate(false);
+    }
+  };
 
   const handlePrintInline = async () => {
     try {
@@ -945,52 +1023,147 @@ export function AnswerSheetKeyView({
             </h2>
           </div>
 
-          {canPrintSheet && (
-            <div className="flex flex-wrap items-center gap-2">
-              <div className="inline-flex p-0.5 rounded-lg bg-neutral-100 border border-neutral-200 text-xs font-medium">
-                {(['A4', 'A5'] as const).map(size => (
-                  <button
-                    key={size}
-                    type="button"
-                    onClick={() => onChangePaperSize(size)}
-                    className={`px-3 py-1.5 rounded-md transition-colors ${
-                      paperSize === size ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-600'
-                    }`}
-                  >
-                    {size}
-                  </button>
-                ))}
+          <div className="flex flex-wrap items-center gap-2">
+            {canManageExams && (
+              <>
+                <button
+                  type="button"
+                  disabled={isSavingTemplate}
+                  onClick={handleSaveAsStandardTemplate}
+                  className="px-3 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 text-white text-xs font-semibold flex items-center gap-1.5 whitespace-nowrap shadow-xs"
+                >
+                  <Check className="w-3.5 h-3.5" />
+                  <span>{isEn ? 'Save as Template' : 'Lưu làm đề mẫu'}</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setShowCloneForm(prev => !prev)}
+                  className="px-3 py-2 rounded-lg border border-indigo-200 bg-indigo-50/70 hover:bg-indigo-100/80 text-indigo-800 text-xs font-semibold flex items-center gap-1.5 whitespace-nowrap"
+                >
+                  <Copy className="w-3.5 h-3.5" />
+                  <span>{isEn ? 'Clone Template' : 'Nhân bản mẫu này'}</span>
+                </button>
+              </>
+            )}
+
+            {canPrintSheet && (
+              <>
+                <div className="inline-flex p-0.5 rounded-lg bg-neutral-100 border border-neutral-200 text-xs font-medium">
+                  {(['A4', 'A5'] as const).map(size => (
+                    <button
+                      key={size}
+                      type="button"
+                      onClick={() => onChangePaperSize(size)}
+                      className={`px-3 py-1.5 rounded-md transition-colors ${
+                        paperSize === size ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-600'
+                      }`}
+                    >
+                      {size}
+                    </button>
+                  ))}
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => setShowPreview(prev => !prev)}
+                  className="px-3 py-2 rounded-lg border border-neutral-200 hover:bg-neutral-50 text-xs font-medium text-slate-700 flex items-center gap-1.5 whitespace-nowrap"
+                >
+                  <Eye className="w-3.5 h-3.5" />
+                  <span>{showPreview ? (isEn ? 'Hide Preview' : 'Ẩn xem trước') : isEn ? 'Preview Sheet' : 'Xem trước phiếu'}</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handleDownloadPdf}
+                  className="px-3.5 py-2 rounded-lg bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold flex items-center gap-1.5 whitespace-nowrap"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  <span>{isEn ? `PDF (${paperSize})` : `Tải PDF (${paperSize})`}</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handlePrintInline}
+                  className="px-3.5 py-2 rounded-lg border border-neutral-300 bg-white hover:bg-neutral-50 text-slate-900 text-xs font-semibold flex items-center gap-1.5 whitespace-nowrap"
+                >
+                  <Printer className="w-3.5 h-3.5" />
+                  <span>{isEn ? 'Print' : 'In phiếu'}</span>
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+
+        {canManageExams && showCloneForm && (
+          <form
+            onSubmit={handleCreateClonedTemplate}
+            className="p-3.5 rounded-xl border border-indigo-200 bg-indigo-50/50 space-y-3 text-xs"
+          >
+            <div className="flex items-center justify-between gap-2">
+              <div className="font-semibold text-indigo-950">
+                {isEn
+                  ? `Clone "${currentProfile.gradeName}" (keeps all ${embeddedImagesCount} cropped pictures & ${totalQuestions} answer keys)`
+                  : `Nhân bản từ đề mẫu "${currentProfile.gradeName}" (giữ nguyên toàn bộ ${embeddedImagesCount} hình đã cắt & ${totalQuestions} câu đáp án)`}
               </div>
-
               <button
                 type="button"
-                onClick={() => setShowPreview(prev => !prev)}
-                className="px-3 py-2 rounded-lg border border-neutral-200 hover:bg-neutral-50 text-xs font-medium text-slate-700 flex items-center gap-1.5 whitespace-nowrap"
+                onClick={() => setShowCloneForm(false)}
+                className="text-slate-400 hover:text-slate-700"
               >
-                <Eye className="w-3.5 h-3.5" />
-                <span>{showPreview ? (isEn ? 'Hide Preview' : 'Ẩn xem trước') : isEn ? 'Preview Sheet' : 'Xem trước phiếu'}</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={handleDownloadPdf}
-                className="px-3.5 py-2 rounded-lg bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold flex items-center gap-1.5 whitespace-nowrap"
-              >
-                <Download className="w-3.5 h-3.5" />
-                <span>{isEn ? `PDF (${paperSize})` : `Tải PDF (${paperSize})`}</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={handlePrintInline}
-                className="px-3.5 py-2 rounded-lg border border-neutral-300 bg-white hover:bg-neutral-50 text-slate-900 text-xs font-semibold flex items-center gap-1.5 whitespace-nowrap"
-              >
-                <Printer className="w-3.5 h-3.5" />
-                <span>{isEn ? 'Print' : 'In phiếu'}</span>
+                <X className="w-4 h-4" />
               </button>
             </div>
-          )}
-        </div>
+            <div className="grid grid-cols-1 sm:grid-cols-4 gap-2.5">
+              <div>
+                <label className="block text-[11px] text-slate-600 mb-1">
+                  {isEn ? 'Target School' : 'Trường áp dụng'}
+                </label>
+                <input
+                  type="text"
+                  value={cloneSchool}
+                  onChange={e => setCloneSchool(e.target.value)}
+                  placeholder="VD: TH Nguyễn Bỉnh Khiêm"
+                  className="w-full px-2.5 py-1.5 rounded-lg border border-neutral-200 bg-white font-medium text-slate-900"
+                />
+              </div>
+              <div>
+                <label className="block text-[11px] text-slate-600 mb-1">
+                  {isEn ? 'Target Grade' : 'Khối lớp mới'}
+                </label>
+                <input
+                  type="text"
+                  value={cloneGrade}
+                  onChange={e => setCloneGrade(e.target.value)}
+                  placeholder="VD: Khối 4"
+                  className="w-full px-2.5 py-1.5 rounded-lg border border-neutral-200 bg-white font-medium text-slate-900"
+                />
+              </div>
+              <div>
+                <label className="block text-[11px] text-slate-600 mb-1">
+                  {isEn ? 'Class (e.g. 4A1, 4A2)' : 'Lớp cụ thể (VD: 4A1, 4A2)'}
+                </label>
+                <input
+                  type="text"
+                  value={cloneClass}
+                  onChange={e => setCloneClass(e.target.value)}
+                  placeholder="VD: 4A1"
+                  className="w-full px-2.5 py-1.5 rounded-lg border border-neutral-200 bg-white font-medium text-slate-900"
+                />
+              </div>
+              <div className="flex items-end">
+                <button
+                  type="submit"
+                  disabled={isSavingTemplate}
+                  className="w-full px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-semibold flex items-center justify-center gap-1.5"
+                >
+                  <Copy className="w-3.5 h-3.5" />
+                  <span>{isEn ? 'Create from Template' : 'Tạo từ mẫu này'}</span>
+                </button>
+              </div>
+            </div>
+          </form>
+        )}
 
         {canManageExams && (
           <div className="pt-3 border-t border-neutral-200 grid grid-cols-1 sm:grid-cols-3 gap-2.5 text-xs">
