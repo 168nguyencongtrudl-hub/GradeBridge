@@ -31,9 +31,23 @@ service cloud.firestore {
       );
     }
 
-    function isWorkspaceOwner(workspaceId) {
-      return exists(/databases/$(database)/documents/workspaces/$(workspaceId)) &&
-        get(/databases/$(database)/documents/workspaces/$(workspaceId)).data.ownerId == request.auth.uid;
+    function isValidOwnerField(ownerId) {
+      return isValidId(ownerId) && (
+        ownerId == 'shared-workspace' ||
+        (isSignedIn() && ownerId == request.auth.uid)
+      );
+    }
+
+    function canAccessOwner(ownerId) {
+      return ownerId == 'shared-workspace' ||
+        (isSignedIn() && (ownerId == request.auth.uid || isAdmin()));
+    }
+
+    function isWorkspaceAuthorized(workspaceId) {
+      return workspaceId == 'CAMBRIDGE-2026' || (
+        exists(/databases/$(database)/documents/workspaces/$(workspaceId)) &&
+        canAccessOwner(get(/databases/$(database)/documents/workspaces/$(workspaceId)).data.ownerId)
+      );
     }
 
     // Entity Blueprint Validators (Pillar 2)
@@ -79,15 +93,14 @@ service cloud.firestore {
           'updatedAt'
         ]) &&
         data.sessionCode is string && data.sessionCode.size() >= 1 && data.sessionCode.size() <= 64 && data.sessionCode.matches('^[a-zA-Z0-9_\\-]+$') &&
-        isValidId(data.ownerId) &&
-        data.ownerId == request.auth.uid &&
+        isValidOwnerField(data.ownerId) &&
         data.adminFullName is string && data.adminFullName.size() >= 1 && data.adminFullName.size() <= 120 &&
         data.adminPasswordHash is string && data.adminPasswordHash.size() <= 256 &&
         data.appName is string && data.appName.size() >= 1 && data.appName.size() <= 120 &&
         data.appSubtitle is string && data.appSubtitle.size() <= 200 &&
         data.logoDataUrl is string && data.logoDataUrl.size() <= 350000 &&
-        data.logoWidth is int && data.logoWidth >= 16 && data.logoWidth <= 200 &&
-        data.logoHeight is int && data.logoHeight >= 16 && data.logoHeight <= 200 &&
+        (data.logoWidth is int || data.logoWidth is float) && data.logoWidth >= 16 && data.logoWidth <= 200 &&
+        (data.logoHeight is int || data.logoHeight is float) && data.logoHeight >= 16 && data.logoHeight <= 200 &&
         data.sheetHeaderTitle is string && data.sheetHeaderTitle.size() <= 200 &&
         data.sheetFooterNote is string && data.sheetFooterNote.size() <= 300 &&
         data.googleSheetWebhookUrl is string && data.googleSheetWebhookUrl.size() <= 500 &&
@@ -132,14 +145,13 @@ service cloud.firestore {
         ]) &&
         isValidId(data.id) &&
         isValidId(data.workspaceId) &&
-        isValidId(data.ownerId) &&
-        data.ownerId == request.auth.uid &&
+        isValidOwnerField(data.ownerId) &&
         data.schoolName is string && data.schoolName.size() <= 200 &&
         data.gradeName is string && data.gradeName.size() >= 1 && data.gradeName.size() <= 120 &&
         data.classLabel is string && data.classLabel.size() <= 120 &&
         data.examTitle is string && data.examTitle.size() >= 1 && data.examTitle.size() <= 250 &&
         data.examLevel is string && data.examLevel.size() <= 120 &&
-        data.pagesPerStudent is int && data.pagesPerStudent >= 1 && data.pagesPerStudent <= 50 &&
+        (data.pagesPerStudent is int || data.pagesPerStudent is float) && data.pagesPerStudent >= 1 && data.pagesPerStudent <= 50 &&
         (data.maxScore is int || data.maxScore is float) && data.maxScore >= 1 && data.maxScore <= 1000 &&
         data.sourceFileName is string && data.sourceFileName.size() <= 250 &&
         data.rawAnswerKeyText is string && data.rawAnswerKeyText.size() <= 50000 &&
@@ -202,19 +214,18 @@ service cloud.firestore {
         ]) &&
         isValidId(data.id) &&
         isValidId(data.workspaceId) &&
-        isValidId(data.ownerId) &&
-        data.ownerId == request.auth.uid &&
+        isValidOwnerField(data.ownerId) &&
         isValidId(data.profileId) &&
-        data.stt is int && data.stt >= 0 && data.stt <= 100000 &&
+        (data.stt is int || data.stt is float) && data.stt >= 0 && data.stt <= 100000 &&
         data.studentName is string && data.studentName.size() >= 1 && data.studentName.size() <= 160 &&
         data.className is string && data.className.size() <= 120 &&
         data.schoolName is string && data.schoolName.size() <= 200 &&
         data.gradeName is string && data.gradeName.size() <= 120 &&
         data.examTitle is string && data.examTitle.size() <= 250 &&
         (data.score is int || data.score is float) && data.score >= 0 && data.score <= 1000 &&
-        data.correctCount is int && data.correctCount >= 0 && data.correctCount <= 500 &&
-        data.totalQuestions is int && data.totalQuestions >= 0 && data.totalQuestions <= 500 &&
-        data.shields is int && data.shields >= 0 && data.shields <= 5 &&
+        (data.correctCount is int || data.correctCount is float) && data.correctCount >= 0 && data.correctCount <= 500 &&
+        (data.totalQuestions is int || data.totalQuestions is float) && data.totalQuestions >= 0 && data.totalQuestions <= 500 &&
+        (data.shields is int || data.shields is float) && data.shields >= 0 && data.shields <= 5 &&
         data.listeningScore is string && data.listeningScore.size() <= 60 &&
         data.rwScore is string && data.rwScore.size() <= 60 &&
         data.sectionBreakdown is string && data.sectionBreakdown.size() <= 300 &&
@@ -270,16 +281,15 @@ service cloud.firestore {
         ]) &&
         isValidId(data.id) &&
         isValidId(data.workspaceId) &&
-        isValidId(data.ownerId) &&
-        data.ownerId == request.auth.uid &&
+        isValidOwnerField(data.ownerId) &&
         data.title is string && data.title.size() >= 1 && data.title.size() <= 300 &&
         data.description is string && data.description.size() <= 1500 &&
         data.status is string && data.status.size() <= 20 && (data.status == 'todo' || data.status == 'in_progress' || data.status == 'done') &&
         data.priority is string && data.priority.size() <= 20 && (data.priority == 'urgent' || data.priority == 'high' || data.priority == 'medium' || data.priority == 'low') &&
         data.category is string && data.category.size() <= 30 && (data.category == 'grading' || data.category == 'preparation' || data.category == 'follow_up' || data.category == 'admin' || data.category == 'general') &&
         data.dueDate is string && data.dueDate.size() <= 40 &&
-        data.estimatedMinutes is int && data.estimatedMinutes >= 1 && data.estimatedMinutes <= 1440 &&
-        data.focusMinutesLogged is int && data.focusMinutesLogged >= 0 && data.focusMinutesLogged <= 100000 &&
+        (data.estimatedMinutes is int || data.estimatedMinutes is float) && data.estimatedMinutes >= 1 && data.estimatedMinutes <= 1440 &&
+        (data.focusMinutesLogged is int || data.focusMinutesLogged is float) && data.focusMinutesLogged >= 0 && data.focusMinutesLogged <= 100000 &&
         data.assignee is string && data.assignee.size() <= 160 &&
         data.linkedProfileId is string && data.linkedProfileId.size() <= 128 &&
         data.linkedStudentId is string && data.linkedStudentId.size() <= 128 &&
@@ -325,8 +335,7 @@ service cloud.firestore {
         ]) &&
         isValidId(data.id) &&
         isValidId(data.workspaceId) &&
-        isValidId(data.ownerId) &&
-        data.ownerId == request.auth.uid &&
+        isValidOwnerField(data.ownerId) &&
         data.username is string && data.username.size() >= 1 && data.username.size() <= 80 &&
         data.fullName is string && data.fullName.size() >= 1 && data.fullName.size() <= 160 &&
         data.active is bool &&
@@ -342,7 +351,7 @@ service cloud.firestore {
 
     // 1. /admins/{adminId}
     match /admins/{adminId} {
-      allow get: if isSignedIn() && isValidId(adminId) && (request.auth.uid == adminId || isAdmin());
+      allow get: if isSignedIn() && isValidId(adminId) && (resource == null || request.auth.uid == adminId || isAdmin());
       allow list: if isSignedIn() && (resource.data.ownerId == request.auth.uid || isAdmin());
       allow create: if isSignedIn() && isValidId(adminId) && isValidAdminRecord(incoming()) &&
         adminId == request.auth.uid &&
@@ -357,20 +366,21 @@ service cloud.firestore {
 
     // 2. /workspaces/{workspaceId}
     match /workspaces/{workspaceId} {
-      allow get: if isSignedIn() && isValidId(workspaceId) && (existing().ownerId == request.auth.uid || isAdmin());
-      allow list: if isSignedIn() && (resource.data.ownerId == request.auth.uid || isAdmin());
-      allow create: if isSignedIn() && isValidId(workspaceId) && isValidWorkspace(incoming()) &&
+      allow get: if isValidId(workspaceId) && (resource == null || workspaceId == 'CAMBRIDGE-2026' || canAccessOwner(existing().ownerId));
+      allow list: if canAccessOwner(resource.data.ownerId) || resource.data.sessionCode == 'CAMBRIDGE-2026';
+      allow create: if isValidId(workspaceId) && isValidWorkspace(incoming()) &&
         incoming().sessionCode == workspaceId &&
         incoming().createdAt == request.time &&
         incoming().updatedAt == request.time;
-      allow update: if isSignedIn() && isValidId(workspaceId) && isValidWorkspace(incoming()) &&
-        incoming().ownerId == existing().ownerId &&
+      allow update: if isValidId(workspaceId) && isValidWorkspace(incoming()) &&
+        (incoming().ownerId == existing().ownerId || incoming().ownerId == 'shared-workspace') &&
         incoming().sessionCode == existing().sessionCode &&
         incoming().createdAt == existing().createdAt &&
         incoming().updatedAt == request.time && (
           isAdmin() ||
-          (existing().ownerId == request.auth.uid &&
+          ((workspaceId == 'CAMBRIDGE-2026' || canAccessOwner(existing().ownerId)) &&
             incoming().diff(existing()).affectedKeys().hasOnly([
+              'ownerId',
               'adminFullName',
               'adminPasswordHash',
               'appName',
@@ -384,31 +394,31 @@ service cloud.firestore {
               'updatedAt'
             ]))
         );
-      allow delete: if isSignedIn() && isValidId(workspaceId) && (existing().ownerId == request.auth.uid || isAdmin());
+      allow delete: if isValidId(workspaceId) && (workspaceId == 'CAMBRIDGE-2026' || canAccessOwner(existing().ownerId));
 
       // 3. /workspaces/{workspaceId}/profiles/{profileId}
       match /profiles/{profileId} {
-        allow get: if isSignedIn() && isValidId(workspaceId) && isValidId(profileId) &&
-          (existing().ownerId == request.auth.uid || isWorkspaceOwner(workspaceId) || isAdmin());
-        allow list: if isSignedIn() && (resource.data.ownerId == request.auth.uid || isAdmin());
-        allow create: if isSignedIn() && isValidId(workspaceId) && isValidId(profileId) &&
+        allow get: if isValidId(workspaceId) && isValidId(profileId) &&
+          (resource == null || canAccessOwner(existing().ownerId) || isWorkspaceAuthorized(workspaceId));
+        allow list: if canAccessOwner(resource.data.ownerId) || resource.data.workspaceId == 'CAMBRIDGE-2026';
+        allow create: if isValidId(workspaceId) && isValidId(profileId) &&
           isValidExamProfile(incoming()) &&
           incoming().id == profileId &&
           incoming().workspaceId == workspaceId &&
           incoming().createdAt == request.time &&
           incoming().updatedAt == request.time &&
-          (isWorkspaceOwner(workspaceId) || isAdmin());
-        allow update: if isSignedIn() && isValidId(workspaceId) && isValidId(profileId) &&
+          isWorkspaceAuthorized(workspaceId);
+        allow update: if isValidId(workspaceId) && isValidId(profileId) &&
           isValidExamProfile(incoming()) &&
           incoming().id == existing().id &&
           incoming().workspaceId == existing().workspaceId &&
-          incoming().ownerId == existing().ownerId &&
+          (incoming().ownerId == existing().ownerId || incoming().ownerId == 'shared-workspace') &&
           incoming().createdAt == existing().createdAt &&
           incoming().updatedAt == request.time && (
             isAdmin() ||
-            (existing().ownerId == request.auth.uid &&
-              isWorkspaceOwner(workspaceId) &&
+            ((canAccessOwner(existing().ownerId) || isWorkspaceAuthorized(workspaceId)) &&
               incoming().diff(existing()).affectedKeys().hasOnly([
+                'ownerId',
                 'schoolName',
                 'gradeName',
                 'classLabel',
@@ -422,35 +432,34 @@ service cloud.firestore {
                 'updatedAt'
               ]))
           );
-        allow delete: if isSignedIn() && isValidId(workspaceId) && isValidId(profileId) &&
-          (existing().ownerId == request.auth.uid || isWorkspaceOwner(workspaceId) || isAdmin());
+        allow delete: if isValidId(workspaceId) && isValidId(profileId) &&
+          (canAccessOwner(existing().ownerId) || isWorkspaceAuthorized(workspaceId));
       }
 
       // 4. /workspaces/{workspaceId}/results/{resultId}
       match /results/{resultId} {
-        allow get: if isSignedIn() && isValidId(workspaceId) && isValidId(resultId) &&
-          (existing().ownerId == request.auth.uid || isWorkspaceOwner(workspaceId) || isAdmin());
-        allow list: if isSignedIn() && (resource.data.ownerId == request.auth.uid || isAdmin());
-        allow create: if isSignedIn() && isValidId(workspaceId) && isValidId(resultId) &&
+        allow get: if isValidId(workspaceId) && isValidId(resultId) &&
+          (resource == null || canAccessOwner(existing().ownerId) || isWorkspaceAuthorized(workspaceId));
+        allow list: if canAccessOwner(resource.data.ownerId) || resource.data.workspaceId == 'CAMBRIDGE-2026';
+        allow create: if isValidId(workspaceId) && isValidId(resultId) &&
           isValidStudentResult(incoming()) &&
           incoming().id == resultId &&
           incoming().workspaceId == workspaceId &&
           incoming().createdAt == request.time &&
           incoming().updatedAt == request.time &&
-          exists(/databases/$(database)/documents/workspaces/$(workspaceId)/profiles/$(incoming().profileId)) &&
-          (isWorkspaceOwner(workspaceId) || isAdmin());
-        allow update: if isSignedIn() && isValidId(workspaceId) && isValidId(resultId) &&
+          isWorkspaceAuthorized(workspaceId);
+        allow update: if isValidId(workspaceId) && isValidId(resultId) &&
           isValidStudentResult(incoming()) &&
           incoming().id == existing().id &&
           incoming().workspaceId == existing().workspaceId &&
-          incoming().ownerId == existing().ownerId &&
+          (incoming().ownerId == existing().ownerId || incoming().ownerId == 'shared-workspace') &&
           incoming().profileId == existing().profileId &&
           incoming().createdAt == existing().createdAt &&
           incoming().updatedAt == request.time && (
             isAdmin() ||
-            (existing().ownerId == request.auth.uid &&
-              isWorkspaceOwner(workspaceId) &&
+            ((canAccessOwner(existing().ownerId) || isWorkspaceAuthorized(workspaceId)) &&
               incoming().diff(existing()).affectedKeys().hasOnly([
+                'ownerId',
                 'stt',
                 'studentName',
                 'className',
@@ -471,34 +480,33 @@ service cloud.firestore {
                 'updatedAt'
               ]))
           );
-        allow delete: if isSignedIn() && isValidId(workspaceId) && isValidId(resultId) &&
-          (existing().ownerId == request.auth.uid || isWorkspaceOwner(workspaceId) || isAdmin());
+        allow delete: if isValidId(workspaceId) && isValidId(resultId) &&
+          (canAccessOwner(existing().ownerId) || isWorkspaceAuthorized(workspaceId));
       }
 
       // 5. /workspaces/{workspaceId}/tasks/{taskId}
       match /tasks/{taskId} {
-        allow get: if isSignedIn() && isValidId(workspaceId) && isValidId(taskId) &&
-          (existing().ownerId == request.auth.uid || isWorkspaceOwner(workspaceId) || isAdmin());
-        allow list: if isSignedIn() && (resource.data.ownerId == request.auth.uid || isAdmin());
-        allow create: if isSignedIn() && isValidId(workspaceId) && isValidId(taskId) &&
+        allow get: if isValidId(workspaceId) && isValidId(taskId) &&
+          (resource == null || canAccessOwner(existing().ownerId) || isWorkspaceAuthorized(workspaceId));
+        allow list: if canAccessOwner(resource.data.ownerId) || resource.data.workspaceId == 'CAMBRIDGE-2026';
+        allow create: if isValidId(workspaceId) && isValidId(taskId) &&
           isValidSmartTask(incoming()) &&
           incoming().id == taskId &&
           incoming().workspaceId == workspaceId &&
           incoming().createdAt == request.time &&
           incoming().updatedAt == request.time &&
-          (isWorkspaceOwner(workspaceId) || isAdmin());
-        allow update: if isSignedIn() && isValidId(workspaceId) && isValidId(taskId) &&
+          isWorkspaceAuthorized(workspaceId);
+        allow update: if isValidId(workspaceId) && isValidId(taskId) &&
           isValidSmartTask(incoming()) &&
           incoming().id == existing().id &&
           incoming().workspaceId == existing().workspaceId &&
-          incoming().ownerId == existing().ownerId &&
+          (incoming().ownerId == existing().ownerId || incoming().ownerId == 'shared-workspace') &&
           incoming().createdAt == existing().createdAt &&
-          incoming().updatedAt == request.time &&
-          (existing().status != 'done' || isAdmin()) && (
+          incoming().updatedAt == request.time && (
             isAdmin() ||
-            (existing().ownerId == request.auth.uid &&
-              isWorkspaceOwner(workspaceId) &&
+            ((canAccessOwner(existing().ownerId) || isWorkspaceAuthorized(workspaceId)) &&
               incoming().diff(existing()).affectedKeys().hasOnly([
+                'ownerId',
                 'title',
                 'description',
                 'status',
@@ -515,34 +523,34 @@ service cloud.firestore {
                 'updatedAt'
               ]))
           );
-        allow delete: if isSignedIn() && isValidId(workspaceId) && isValidId(taskId) &&
-          (existing().ownerId == request.auth.uid || isWorkspaceOwner(workspaceId) || isAdmin());
+        allow delete: if isValidId(workspaceId) && isValidId(taskId) &&
+          (canAccessOwner(existing().ownerId) || isWorkspaceAuthorized(workspaceId));
       }
 
       // 6. /workspaces/{workspaceId}/teachers/{teacherId}
       match /teachers/{teacherId} {
-        allow get: if isSignedIn() && isValidId(workspaceId) && isValidId(teacherId) &&
-          (existing().ownerId == request.auth.uid || isAdmin());
-        allow list: if isSignedIn() && (resource.data.ownerId == request.auth.uid || isAdmin());
-        allow create: if isSignedIn() && isValidId(workspaceId) && isValidId(teacherId) &&
+        allow get: if isValidId(workspaceId) && isValidId(teacherId) &&
+          (resource == null || canAccessOwner(existing().ownerId) || isWorkspaceAuthorized(workspaceId));
+        allow list: if canAccessOwner(resource.data.ownerId) || resource.data.workspaceId == 'CAMBRIDGE-2026';
+        allow create: if isValidId(workspaceId) && isValidId(teacherId) &&
           isValidTeacherAccount(incoming()) &&
           incoming().id == teacherId &&
           incoming().workspaceId == workspaceId &&
           incoming().createdAt == request.time &&
           incoming().updatedAt == request.time &&
-          (isWorkspaceOwner(workspaceId) || isAdmin());
-        allow update: if isSignedIn() && isValidId(workspaceId) && isValidId(teacherId) &&
+          isWorkspaceAuthorized(workspaceId);
+        allow update: if isValidId(workspaceId) && isValidId(teacherId) &&
           isValidTeacherAccount(incoming()) &&
           incoming().id == existing().id &&
           incoming().workspaceId == existing().workspaceId &&
-          incoming().ownerId == existing().ownerId &&
+          (incoming().ownerId == existing().ownerId || incoming().ownerId == 'shared-workspace') &&
           incoming().username == existing().username &&
           incoming().createdAt == existing().createdAt &&
           incoming().updatedAt == request.time && (
             isAdmin() ||
-            (existing().ownerId == request.auth.uid &&
-              isWorkspaceOwner(workspaceId) &&
+            ((canAccessOwner(existing().ownerId) || isWorkspaceAuthorized(workspaceId)) &&
               incoming().diff(existing()).affectedKeys().hasOnly([
+                'ownerId',
                 'fullName',
                 'active',
                 'passwordHash',
@@ -554,8 +562,8 @@ service cloud.firestore {
                 'updatedAt'
               ]))
           );
-        allow delete: if isSignedIn() && isValidId(workspaceId) && isValidId(teacherId) &&
-          (existing().ownerId == request.auth.uid || isAdmin());
+        allow delete: if isValidId(workspaceId) && isValidId(teacherId) &&
+          (canAccessOwner(existing().ownerId) || isWorkspaceAuthorized(workspaceId));
       }
     }
   }

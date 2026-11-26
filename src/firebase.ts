@@ -37,6 +37,8 @@ const app = initializeApp(firebaseConfig);
 export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
 export const auth = getAuth(app);
 
+export const SHARED_OWNER_ID = 'shared-workspace';
+
 // Validate connection to Firestore on startup
 async function testConnection() {
   try {
@@ -79,7 +81,7 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
   const errInfo: FirestoreErrorInfo = {
     error: error instanceof Error ? error.message : String(error),
     authInfo: {
-      userId: auth.currentUser?.uid,
+      userId: auth.currentUser?.uid || SHARED_OWNER_ID,
       email: auth.currentUser?.email,
       emailVerified: auth.currentUser?.emailVerified,
       isAnonymous: auth.currentUser?.isAnonymous,
@@ -155,9 +157,6 @@ export async function ensureFirestoreWorkspace(
   rawSessionCode: string,
   seed?: Partial<CloudWorkspaceSnapshot>
 ): Promise<CloudWorkspaceSnapshot | null> {
-  const user = auth.currentUser;
-  if (!user || !user.emailVerified) return null;
-
   const workspaceId = sanitizeFirestoreId(rawSessionCode.toUpperCase(), 'CAMBRIDGE-2026').slice(0, 64);
   const wsPath = `workspaces/${workspaceId}`;
   const wsRef = doc(db, 'workspaces', workspaceId);
@@ -174,8 +173,8 @@ export async function ensureFirestoreWorkspace(
   if (!wsSnap.exists()) {
     const createPayload = {
       sessionCode: workspaceId,
-      ownerId: user.uid,
-      adminFullName: clampStr(seed?.adminFullName || user.displayName || 'Administrator', 120, 1, 'Administrator'),
+      ownerId: SHARED_OWNER_ID,
+      adminFullName: clampStr(seed?.adminFullName || 'Administrator', 120, 1, 'Administrator'),
       adminPasswordHash: clampStr(seed?.adminPasswordHash || '', 256),
       appName: clampStr(branding.appName, 120, 1, 'Cambridge Grader'),
       appSubtitle: clampStr(branding.appSubtitle, 200),
@@ -211,15 +210,18 @@ export async function ensureFirestoreWorkspace(
         await upsertFirestoreResult(workspaceId, r);
       }
     }
+
+    if (seed?.teacherAccounts && seed.teacherAccounts.length > 0) {
+      for (const teacher of seed.teacherAccounts) {
+        await upsertFirestoreTeacher(workspaceId, teacher);
+      }
+    }
   }
 
   return loadFirestoreWorkspace(workspaceId);
 }
 
 export async function loadFirestoreWorkspace(rawSessionCode: string): Promise<CloudWorkspaceSnapshot | null> {
-  const user = auth.currentUser;
-  if (!user || !user.emailVerified) return null;
-
   const workspaceId = sanitizeFirestoreId(rawSessionCode.toUpperCase(), 'CAMBRIDGE-2026').slice(0, 64);
   const wsPath = `workspaces/${workspaceId}`;
   const wsRef = doc(db, 'workspaces', workspaceId);
@@ -233,7 +235,6 @@ export async function loadFirestoreWorkspace(rawSessionCode: string): Promise<Cl
 
   if (!wsSnap.exists()) return null;
   const wsData = wsSnap.data();
-  const ownerId = String(wsData.ownerId || user.uid);
 
   const profilesPath = `workspaces/${workspaceId}/profiles`;
   const resultsPath = `workspaces/${workspaceId}/results`;
@@ -242,49 +243,51 @@ export async function loadFirestoreWorkspace(rawSessionCode: string): Promise<Cl
 
   let profSnaps;
   try {
-    profSnaps = await getDocs(query(collection(db, profilesPath), where('ownerId', '==', ownerId)));
+    profSnaps = await getDocs(query(collection(db, profilesPath), where('ownerId', '==', SHARED_OWNER_ID)));
   } catch (error) {
     handleFirestoreError(error, OperationType.LIST, profilesPath);
   }
 
   let resSnaps;
   try {
-    resSnaps = await getDocs(query(collection(db, resultsPath), where('ownerId', '==', ownerId)));
+    resSnaps = await getDocs(query(collection(db, resultsPath), where('ownerId', '==', SHARED_OWNER_ID)));
   } catch (error) {
     handleFirestoreError(error, OperationType.LIST, resultsPath);
   }
 
   let taskSnaps;
   try {
-    taskSnaps = await getDocs(query(collection(db, tasksPath), where('ownerId', '==', ownerId)));
+    taskSnaps = await getDocs(query(collection(db, tasksPath), where('ownerId', '==', SHARED_OWNER_ID)));
   } catch (error) {
     handleFirestoreError(error, OperationType.LIST, tasksPath);
   }
 
   let teacherSnaps;
   try {
-    teacherSnaps = await getDocs(query(collection(db, teachersPath), where('ownerId', '==', ownerId)));
+    teacherSnaps = await getDocs(query(collection(db, teachersPath), where('ownerId', '==', SHARED_OWNER_ID)));
   } catch (error) {
     handleFirestoreError(error, OperationType.LIST, teachersPath);
   }
 
-  const examProfiles: ExamProfile[] = profSnaps.docs.map(d => {
-    const data = d.data();
-    return {
-      id: String(data.id || d.id),
-      schoolName: String(data.schoolName || ''),
-      gradeName: String(data.gradeName || 'Grade'),
-      classLabel: String(data.classLabel || ''),
-      examTitle: String(data.examTitle || 'Cambridge Exam'),
-      examLevel: String(data.examLevel || ''),
-      pagesPerStudent: Number(data.pagesPerStudent) || 9,
-      maxScore: Number(data.maxScore) || 8,
-      sourceFileName: String(data.sourceFileName || ''),
-      answerKeyText: String(data.rawAnswerKeyText || ''),
-      parts: Array.isArray(data.parts) ? (data.parts as ExamPart[]) : [],
-      updatedAt: data.updatedAt?.toMillis?.() || Date.now()
-    };
-  });
+  const examProfiles: ExamProfile[] = profSnaps.docs
+    .map(d => {
+      const data = d.data();
+      return {
+        id: String(data.id || d.id),
+        schoolName: String(data.schoolName || ''),
+        gradeName: String(data.gradeName || 'Grade'),
+        classLabel: String(data.classLabel || ''),
+        examTitle: String(data.examTitle || 'Cambridge Exam'),
+        examLevel: String(data.examLevel || ''),
+        pagesPerStudent: Number(data.pagesPerStudent) || 9,
+        maxScore: Number(data.maxScore) || 8,
+        sourceFileName: String(data.sourceFileName || ''),
+        answerKeyText: String(data.rawAnswerKeyText || ''),
+        parts: Array.isArray(data.parts) ? (data.parts as ExamPart[]) : [],
+        updatedAt: data.updatedAt?.toMillis?.() || Date.now()
+      };
+    })
+    .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
 
   const allResults: StudentResult[] = resSnaps.docs
     .map(d => {
@@ -399,9 +402,6 @@ export async function updateFirestoreWorkspaceMeta(
     googleSheetWebhookUrl: string;
   }>
 ): Promise<void> {
-  const user = auth.currentUser;
-  if (!user || !user.emailVerified) return;
-
   const workspaceId = sanitizeFirestoreId(rawSessionCode.toUpperCase(), 'CAMBRIDGE-2026').slice(0, 64);
   const wsPath = `workspaces/${workspaceId}`;
   const wsRef = doc(db, 'workspaces', workspaceId);
@@ -426,6 +426,7 @@ export async function updateFirestoreWorkspaceMeta(
   const existing = snap.data();
   const b = updates.systemBranding;
   const patch: Record<string, unknown> = {
+    ownerId: SHARED_OWNER_ID,
     adminFullName: clampStr(updates.adminFullName ?? existing.adminFullName, 120, 1, 'Administrator'),
     adminPasswordHash: clampStr(updates.adminPasswordHash ?? existing.adminPasswordHash, 256),
     appName: clampStr(b ? b.appName : existing.appName, 120, 1, 'Cambridge Grader'),
@@ -447,28 +448,33 @@ export async function updateFirestoreWorkspaceMeta(
 }
 
 export async function upsertFirestoreProfile(rawSessionCode: string, profile: ExamProfile): Promise<void> {
-  const user = auth.currentUser;
-  if (!user || !user.emailVerified) return;
-
   const workspaceId = sanitizeFirestoreId(rawSessionCode.toUpperCase(), 'CAMBRIDGE-2026').slice(0, 64);
   const profileId = sanitizeFirestoreId(profile.id, `profile-${Date.now()}`);
   const path = `workspaces/${workspaceId}/profiles/${profileId}`;
   const ref = doc(db, 'workspaces', workspaceId, 'profiles', profileId);
 
-  // Sanitize parts so embedded base64 images don't exceed Firestore's 1MB document limit
+  // Budget embedded base64 images so total Firestore document size never exceeds 750KB (Firestore limit is 1MB)
+  let remainingImageBudget = 700000;
+  const takeImageIfFits = (dataUrl: unknown, maxSingleLen: number): string => {
+    if (typeof dataUrl !== 'string' || dataUrl.length === 0 || dataUrl.length > maxSingleLen) return '';
+    if (dataUrl.length > remainingImageBudget) return '';
+    remainingImageBudget -= dataUrl.length;
+    return dataUrl;
+  };
+
   const safeParts = (Array.isArray(profile.parts) ? profile.parts : []).slice(0, 30).map(p => ({
     id: String(p.id || ''),
     title: String(p.title || ''),
     skill: p.skill === 'Listening' ? 'Listening' : 'Reading & Writing',
     type: String(p.type || 'mcq_abc'),
     note: String(p.note || ''),
-    sceneImageDataUrl: typeof p.sceneImageDataUrl === 'string' && p.sceneImageDataUrl.length < 90000 ? p.sceneImageDataUrl : '',
+    sceneImageDataUrl: takeImageIfFits(p.sceneImageDataUrl, 95000),
     options: Array.isArray(p.options) ? p.options.slice(0, 15).map(String) : [],
     targets: Array.isArray(p.targets)
       ? p.targets.slice(0, 15).map(t => ({
           code: String(t.code || ''),
           label: String(t.label || ''),
-          imageDataUrl: typeof t.imageDataUrl === 'string' && t.imageDataUrl.length < 60000 ? t.imageDataUrl : ''
+          imageDataUrl: takeImageIfFits(t.imageDataUrl, 65000)
         }))
       : [],
     items: Array.isArray(p.items)
@@ -477,7 +483,7 @@ export async function upsertFirestoreProfile(rawSessionCode: string, profile: Ex
           prompt: String(it.prompt || ''),
           ans: String(it.ans || ''),
           targetDesc: String(it.targetDesc || ''),
-          imageDataUrl: typeof it.imageDataUrl === 'string' && it.imageDataUrl.length < 60000 ? it.imageDataUrl : ''
+          imageDataUrl: takeImageIfFits(it.imageDataUrl, 65000)
         }))
       : []
   }));
@@ -494,7 +500,7 @@ export async function upsertFirestoreProfile(rawSessionCode: string, profile: Ex
       await setDoc(ref, {
         id: profileId,
         workspaceId,
-        ownerId: user.uid,
+        ownerId: SHARED_OWNER_ID,
         schoolName: clampStr(profile.schoolName, 200),
         gradeName: clampStr(profile.gradeName, 120, 1, 'Grade'),
         classLabel: clampStr(profile.classLabel, 120),
@@ -514,6 +520,7 @@ export async function upsertFirestoreProfile(rawSessionCode: string, profile: Ex
   } else {
     try {
       await updateDoc(ref, {
+        ownerId: SHARED_OWNER_ID,
         schoolName: clampStr(profile.schoolName, 200),
         gradeName: clampStr(profile.gradeName, 120, 1, 'Grade'),
         classLabel: clampStr(profile.classLabel, 120),
@@ -533,8 +540,6 @@ export async function upsertFirestoreProfile(rawSessionCode: string, profile: Ex
 }
 
 export async function deleteFirestoreProfile(rawSessionCode: string, rawProfileId: string): Promise<void> {
-  const user = auth.currentUser;
-  if (!user || !user.emailVerified) return;
   const workspaceId = sanitizeFirestoreId(rawSessionCode.toUpperCase(), 'CAMBRIDGE-2026').slice(0, 64);
   const profileId = sanitizeFirestoreId(rawProfileId);
   const path = `workspaces/${workspaceId}/profiles/${profileId}`;
@@ -546,9 +551,6 @@ export async function deleteFirestoreProfile(rawSessionCode: string, rawProfileI
 }
 
 export async function upsertFirestoreResult(rawSessionCode: string, result: StudentResult): Promise<void> {
-  const user = auth.currentUser;
-  if (!user || !user.emailVerified) return;
-
   const workspaceId = sanitizeFirestoreId(rawSessionCode.toUpperCase(), 'CAMBRIDGE-2026').slice(0, 64);
   const resultId = sanitizeFirestoreId(result.id, `res-${Date.now()}`);
   const profileId = sanitizeFirestoreId(result.profileId, INITIAL_EXAM_PROFILES[0].id);
@@ -577,7 +579,7 @@ export async function upsertFirestoreResult(rawSessionCode: string, result: Stud
       await setDoc(ref, {
         id: resultId,
         workspaceId,
-        ownerId: user.uid,
+        ownerId: SHARED_OWNER_ID,
         profileId,
         stt: clampInt(result.stt, 0, 100000, 1),
         studentName: clampStr(result.studentName, 160, 1, 'Chưa rõ'),
@@ -605,6 +607,7 @@ export async function upsertFirestoreResult(rawSessionCode: string, result: Stud
   } else {
     try {
       await updateDoc(ref, {
+        ownerId: SHARED_OWNER_ID,
         stt: clampInt(result.stt, 0, 100000, 1),
         studentName: clampStr(result.studentName, 160, 1, 'Chưa rõ'),
         className: clampStr(result.className, 120),
@@ -631,8 +634,6 @@ export async function upsertFirestoreResult(rawSessionCode: string, result: Stud
 }
 
 export async function deleteFirestoreResult(rawSessionCode: string, rawResultId: string): Promise<void> {
-  const user = auth.currentUser;
-  if (!user || !user.emailVerified) return;
   const workspaceId = sanitizeFirestoreId(rawSessionCode.toUpperCase(), 'CAMBRIDGE-2026').slice(0, 64);
   const resultId = sanitizeFirestoreId(rawResultId);
   const path = `workspaces/${workspaceId}/results/${resultId}`;
@@ -644,9 +645,6 @@ export async function deleteFirestoreResult(rawSessionCode: string, rawResultId:
 }
 
 export async function upsertFirestoreTask(rawSessionCode: string, task: SmartTask): Promise<void> {
-  const user = auth.currentUser;
-  if (!user || !user.emailVerified) return;
-
   const workspaceId = sanitizeFirestoreId(rawSessionCode.toUpperCase(), 'CAMBRIDGE-2026').slice(0, 64);
   const taskId = sanitizeFirestoreId(task.id, `task-${Date.now()}`);
   const path = `workspaces/${workspaceId}/tasks/${taskId}`;
@@ -675,7 +673,7 @@ export async function upsertFirestoreTask(rawSessionCode: string, task: SmartTas
       await setDoc(ref, {
         id: taskId,
         workspaceId,
-        ownerId: user.uid,
+        ownerId: SHARED_OWNER_ID,
         title: clampStr(task.title, 300, 1, 'Công việc'),
         description: clampStr(task.description, 1500),
         status: safeStatus,
@@ -698,6 +696,7 @@ export async function upsertFirestoreTask(rawSessionCode: string, task: SmartTas
   } else {
     try {
       await updateDoc(ref, {
+        ownerId: SHARED_OWNER_ID,
         title: clampStr(task.title, 300, 1, 'Công việc'),
         description: clampStr(task.description, 1500),
         status: safeStatus,
@@ -720,8 +719,6 @@ export async function upsertFirestoreTask(rawSessionCode: string, task: SmartTas
 }
 
 export async function deleteFirestoreTask(rawSessionCode: string, rawTaskId: string): Promise<void> {
-  const user = auth.currentUser;
-  if (!user || !user.emailVerified) return;
   const workspaceId = sanitizeFirestoreId(rawSessionCode.toUpperCase(), 'CAMBRIDGE-2026').slice(0, 64);
   const taskId = sanitizeFirestoreId(rawTaskId);
   const path = `workspaces/${workspaceId}/tasks/${taskId}`;
@@ -733,9 +730,6 @@ export async function deleteFirestoreTask(rawSessionCode: string, rawTaskId: str
 }
 
 export async function upsertFirestoreTeacher(rawSessionCode: string, teacher: StoredCloudTeacher): Promise<void> {
-  const user = auth.currentUser;
-  if (!user || !user.emailVerified) return;
-
   const workspaceId = sanitizeFirestoreId(rawSessionCode.toUpperCase(), 'CAMBRIDGE-2026').slice(0, 64);
   const teacherId = sanitizeFirestoreId(teacher.id, `teacher-${Date.now()}`);
   const path = `workspaces/${workspaceId}/teachers/${teacherId}`;
@@ -753,7 +747,7 @@ export async function upsertFirestoreTeacher(rawSessionCode: string, teacher: St
       await setDoc(ref, {
         id: teacherId,
         workspaceId,
-        ownerId: user.uid,
+        ownerId: SHARED_OWNER_ID,
         username: clampStr(teacher.username, 80, 1, 'teacher'),
         fullName: clampStr(teacher.fullName, 160, 1, 'Teacher'),
         active: Boolean(teacher.active),
@@ -772,6 +766,7 @@ export async function upsertFirestoreTeacher(rawSessionCode: string, teacher: St
   } else {
     try {
       await updateDoc(ref, {
+        ownerId: SHARED_OWNER_ID,
         fullName: clampStr(teacher.fullName, 160, 1, 'Teacher'),
         active: Boolean(teacher.active),
         passwordHash: clampStr(teacher.passwordHash, 256, 1, 'hash'),
@@ -789,8 +784,6 @@ export async function upsertFirestoreTeacher(rawSessionCode: string, teacher: St
 }
 
 export async function deleteFirestoreTeacher(rawSessionCode: string, rawTeacherId: string): Promise<void> {
-  const user = auth.currentUser;
-  if (!user || !user.emailVerified) return;
   const workspaceId = sanitizeFirestoreId(rawSessionCode.toUpperCase(), 'CAMBRIDGE-2026').slice(0, 64);
   const teacherId = sanitizeFirestoreId(rawTeacherId);
   const path = `workspaces/${workspaceId}/teachers/${teacherId}`;

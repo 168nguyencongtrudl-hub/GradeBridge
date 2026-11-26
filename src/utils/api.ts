@@ -1,5 +1,4 @@
 import {
-  auth,
   deleteFirestoreProfile,
   deleteFirestoreResult,
   deleteFirestoreTask,
@@ -27,6 +26,7 @@ import type {
 const TOKEN_STORAGE_KEY = 'cambridge_grader_auth_token_v1';
 const ACCOUNT_STORAGE_KEY = 'cambridge_grader_auth_account_v1';
 const LOCAL_WORKSPACE_PREFIX = 'cambridge_grader_room_v2_';
+const CLOUD_SEEDED_PREFIX = 'cambridge_grader_cloud_seeded_v2_';
 
 const FULL_ADMIN_PERMS: UserPermissions = {
   canGrade: true,
@@ -107,6 +107,19 @@ function simpleHash(password: string): string {
   return `v1:${(h2 >>> 0).toString(16).padStart(8, '0')}${(h1 >>> 0).toString(16).padStart(8, '0')}`;
 }
 
+function encodeBase64Unicode(obj: unknown): string {
+  const json = JSON.stringify(obj);
+  if (typeof window !== 'undefined' && typeof window.btoa === 'function') {
+    const bytes = new TextEncoder().encode(json);
+    let binary = '';
+    for (let i = 0; i < bytes.length; i++) {
+      binary += String.fromCharCode(bytes[i]);
+    }
+    return window.btoa(binary);
+  }
+  return '';
+}
+
 export function loadLocalWorkspace(rawSessionCode = 'CAMBRIDGE-2026'): CloudWorkspaceSnapshot {
   const sessionCode = sanitizeCode(rawSessionCode);
   const todayIso = new Date().toISOString().slice(0, 10);
@@ -153,18 +166,34 @@ export function saveLocalWorkspace(store: CloudWorkspaceSnapshot): void {
   try {
     if (typeof window === 'undefined') return;
     const sessionCode = sanitizeCode(store.sessionCode);
-    // Keep result page thumbnails compact in localStorage
     const compactResults = (store.allResults || []).map(r => ({
       ...r,
       pages: (r.pages || []).slice(0, 1).map(p => ({
         pageNum: p.pageNum,
-        dataUrl: typeof p.dataUrl === 'string' && p.dataUrl.length < 180000 ? p.dataUrl : ''
+        dataUrl: typeof p.dataUrl === 'string' && p.dataUrl.length < 120000 ? p.dataUrl : ''
       }))
     }));
-    window.localStorage.setItem(
-      `${LOCAL_WORKSPACE_PREFIX}${sessionCode}`,
-      JSON.stringify({ ...store, sessionCode, allResults: compactResults })
-    );
+    const payload = JSON.stringify({ ...store, sessionCode, allResults: compactResults });
+    try {
+      window.localStorage.setItem(`${LOCAL_WORKSPACE_PREFIX}${sessionCode}`, payload);
+    } catch {
+      // If localStorage 5MB quota is exceeded due to many cropped exam images, save a lightweight copy locally
+      // while full images remain persisted in Firebase Firestore!
+      const lightProfiles = (store.examProfiles || []).map(prof => ({
+        ...prof,
+        parts: (prof.parts || []).map(pt => ({
+          ...pt,
+          sceneImageDataUrl:
+            typeof pt.sceneImageDataUrl === 'string' && pt.sceneImageDataUrl.length < 35000
+              ? pt.sceneImageDataUrl
+              : ''
+        }))
+      }));
+      window.localStorage.setItem(
+        `${LOCAL_WORKSPACE_PREFIX}${sessionCode}`,
+        JSON.stringify({ ...store, sessionCode, examProfiles: lightProfiles, allResults: compactResults })
+      );
+    }
   } catch {
     // Ignore quota errors
   }
@@ -175,66 +204,110 @@ function toPublicTeacher(t: StoredCloudTeacher): TeacherAccount {
   return rest;
 }
 
-async function syncFromCloudIfAuthenticated(sessionCode: string): Promise<CloudWorkspaceSnapshot> {
-  const local = loadLocalWorkspace(sessionCode);
-  if (auth.currentUser && auth.currentUser.emailVerified) {
-    try {
-      const cloud = await ensureFirestoreWorkspace(sessionCode, local);
-      if (cloud) {
-        const merged: CloudWorkspaceSnapshot = {
-          ...local,
-          ...cloud,
-          adminPasswordHash: cloud.adminPasswordHash || local.adminPasswordHash,
-          examProfiles: cloud.examProfiles.length > 0 ? cloud.examProfiles : local.examProfiles,
-          allResults: cloud.allResults.length >= local.allResults.length ? cloud.allResults : local.allResults,
-          tasks: cloud.tasks.length > 0 ? cloud.tasks : local.tasks,
-          teacherAccounts:
-            cloud.teacherAccounts.length >= local.teacherAccounts.length
-              ? cloud.teacherAccounts
-              : local.teacherAccounts
-        };
-        saveLocalWorkspace(merged);
-        return merged;
+/**
+ * Automatically connects to and synchronizes with the shared Firebase Firestore database
+ * as the authoritative multi-user source of truth.
+ */
+export async function syncWithSharedCloud(sessionCode = 'CAMBRIDGE-2026'): Promise<CloudWorkspaceSnapshot> {
+  const cleanCode = sanitizeCode(sessionCode);
+  const local = loadLocalWorkspace(cleanCode);
+  try {
+    const cloud = await ensureFirestoreWorkspace(cleanCode, local);
+    if (cloud) {
+      const seededKey = `${CLOUD_SEEDED_PREFIX}${cleanCode}`;
+      const alreadySeeded =
+        typeof window !== 'undefined' ? Boolean(window.localStorage.getItem(seededKey)) : true;
+
+      if (!alreadySeeded && typeof window !== 'undefined') {
+        window.localStorage.setItem(seededKey, '1');
+        // One-time migration of any pre-existing local records into shared Firestore
+        const cloudProfileIds = new Set(cloud.examProfiles.map(p => p.id));
+        for (const p of local.examProfiles) {
+          if (!cloudProfileIds.has(p.id)) {
+            await upsertFirestoreProfile(cleanCode, p).catch(err =>
+              console.warn('Initial profile push warning:', err)
+            );
+            cloud.examProfiles.unshift(p);
+          }
+        }
+        const cloudResultIds = new Set(cloud.allResults.map(r => r.id));
+        for (const r of local.allResults) {
+          if (!cloudResultIds.has(r.id)) {
+            await upsertFirestoreResult(cleanCode, r).catch(err =>
+              console.warn('Initial result push warning:', err)
+            );
+            cloud.allResults.unshift(r);
+          }
+        }
+        const cloudTaskIds = new Set(cloud.tasks.map(t => t.id));
+        for (const t of local.tasks) {
+          if (!cloudTaskIds.has(t.id)) {
+            await upsertFirestoreTask(cleanCode, t).catch(err =>
+              console.warn('Initial task push warning:', err)
+            );
+            cloud.tasks.unshift(t);
+          }
+        }
+        const cloudTeacherIds = new Set(cloud.teacherAccounts.map(t => t.id));
+        for (const t of local.teacherAccounts) {
+          if (!cloudTeacherIds.has(t.id)) {
+            await upsertFirestoreTeacher(cleanCode, t).catch(err =>
+              console.warn('Initial teacher push warning:', err)
+            );
+            cloud.teacherAccounts.unshift(t);
+          }
+        }
+        if (!cloud.adminPasswordHash && local.adminPasswordHash) {
+          cloud.adminPasswordHash = local.adminPasswordHash;
+          cloud.adminFullName = local.adminFullName || cloud.adminFullName;
+          await updateFirestoreWorkspaceMeta(cleanCode, {
+            adminFullName: cloud.adminFullName,
+            adminPasswordHash: cloud.adminPasswordHash
+          }).catch(() => {});
+        }
       }
-    } catch (err) {
-      console.warn('Firestore sync warning, using local workspace fallback:', err);
+
+      saveLocalWorkspace(cloud);
+      return cloud;
     }
+  } catch (err) {
+    console.warn('Firestore auto-sync warning, using local workspace cache:', err);
   }
   return local;
 }
 
 export async function pushAllLocalToFirestore(sessionCode = 'CAMBRIDGE-2026'): Promise<CloudWorkspaceSnapshot | null> {
-  if (!auth.currentUser || !auth.currentUser.emailVerified) return null;
-  const local = loadLocalWorkspace(sessionCode);
-  await ensureFirestoreWorkspace(sessionCode, local);
-  await updateFirestoreWorkspaceMeta(sessionCode, {
+  const cleanCode = sanitizeCode(sessionCode);
+  const local = loadLocalWorkspace(cleanCode);
+  await ensureFirestoreWorkspace(cleanCode, local);
+  await updateFirestoreWorkspaceMeta(cleanCode, {
     adminFullName: local.adminFullName,
     adminPasswordHash: local.adminPasswordHash,
     systemBranding: local.systemBranding,
     googleSheetWebhookUrl: local.googleSheetWebhookUrl
   });
   for (const prof of local.examProfiles) {
-    await upsertFirestoreProfile(sessionCode, prof);
+    await upsertFirestoreProfile(cleanCode, prof);
   }
   for (const res of local.allResults) {
-    await upsertFirestoreResult(sessionCode, res);
+    await upsertFirestoreResult(cleanCode, res);
   }
   for (const task of local.tasks) {
-    await upsertFirestoreTask(sessionCode, task);
+    await upsertFirestoreTask(cleanCode, task);
   }
   for (const teacher of local.teacherAccounts) {
-    await upsertFirestoreTeacher(sessionCode, teacher);
+    await upsertFirestoreTeacher(cleanCode, teacher);
   }
-  const latest = await loadFirestoreWorkspace(sessionCode);
+  const latest = await loadFirestoreWorkspace(cleanCode);
   if (latest) saveLocalWorkspace(latest);
   return latest;
 }
 
 /**
- * Fallback/Cloud handler for all workspace & auth routes so the application works
- * 100% seamlessly on Vercel (even without the Express backend) and syncs with Firebase Firestore.
+ * Direct Shared Cloud (Firebase Firestore) + Local Cache handler for all workspace, auth & account routes.
+ * Ensures 100% real-time persistence across Vercel and AI Studio for all users.
  */
-async function handleClientPersistedRoute<T>(url: string, options: RequestInit = {}): Promise<T | null> {
+async function handleSharedCloudDataRoute<T>(url: string, options: RequestInit = {}): Promise<T | null> {
   const method = (options.method || 'GET').toUpperCase();
   const parsedUrl = new URL(url, typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000');
   const pathname = parsedUrl.pathname;
@@ -246,7 +319,7 @@ async function handleClientPersistedRoute<T>(url: string, options: RequestInit =
 
   // 1. GET /api/auth/status
   if (pathname === '/api/auth/status' && method === 'GET') {
-    const store = await syncFromCloudIfAuthenticated(sessionCode);
+    const store = await syncWithSharedCloud(sessionCode);
     return {
       sessionCode: store.sessionCode,
       adminConfigured: Boolean(store.adminPasswordHash),
@@ -262,16 +335,15 @@ async function handleClientPersistedRoute<T>(url: string, options: RequestInit =
     if (password.length < 4) {
       throw new Error('Mật khẩu quản trị cần tối thiểu 4 ký tự.');
     }
-    const store = await syncFromCloudIfAuthenticated(sessionCode);
+    const store = await syncWithSharedCloud(sessionCode);
     store.adminFullName = fullName;
     store.adminPasswordHash = simpleHash(password);
     saveLocalWorkspace(store);
-    if (auth.currentUser && auth.currentUser.emailVerified) {
-      await updateFirestoreWorkspaceMeta(sessionCode, {
-        adminFullName: store.adminFullName,
-        adminPasswordHash: store.adminPasswordHash
-      }).catch(() => {});
-    }
+    await updateFirestoreWorkspaceMeta(sessionCode, {
+      adminFullName: store.adminFullName,
+      adminPasswordHash: store.adminPasswordHash
+    });
+
     const account: TeacherAccount = {
       id: 'root-admin',
       username: 'admin',
@@ -281,7 +353,7 @@ async function handleClientPersistedRoute<T>(url: string, options: RequestInit =
       permissions: FULL_ADMIN_PERMS,
       createdAt: Date.now()
     };
-    const token = `local-token.${btoa(JSON.stringify({ sub: 'root-admin', role: 'admin', sessionCode }))}`;
+    const token = `local-token.${encodeBase64Unicode({ sub: 'root-admin', role: 'admin', sessionCode })}`;
     saveCachedAccount(sessionCode, account);
     return { token, sessionCode, account } as unknown as T;
   }
@@ -293,14 +365,17 @@ async function handleClientPersistedRoute<T>(url: string, options: RequestInit =
     if (!username || !password) {
       throw new Error('Vui lòng nhập đầy đủ tên đăng nhập và mật khẩu.');
     }
-    const store = await syncFromCloudIfAuthenticated(sessionCode);
+    const store = await syncWithSharedCloud(sessionCode);
     const inputHash = simpleHash(password);
 
     if (username === 'admin' || username === 'administrator') {
       if (!store.adminPasswordHash) {
-        // First login when no password hash is set in local/cloud yet sets it automatically
         store.adminPasswordHash = inputHash;
         saveLocalWorkspace(store);
+        await updateFirestoreWorkspaceMeta(sessionCode, {
+          adminFullName: store.adminFullName,
+          adminPasswordHash: store.adminPasswordHash
+        });
       } else if (store.adminPasswordHash !== inputHash && store.adminPasswordHash !== password) {
         throw new Error('Tên đăng nhập hoặc mật khẩu không chính xác.');
       }
@@ -313,7 +388,7 @@ async function handleClientPersistedRoute<T>(url: string, options: RequestInit =
         permissions: FULL_ADMIN_PERMS,
         createdAt: 0
       };
-      const token = `local-token.${btoa(JSON.stringify({ sub: 'root-admin', role: 'admin', sessionCode }))}`;
+      const token = `local-token.${encodeBase64Unicode({ sub: 'root-admin', role: 'admin', sessionCode })}`;
       saveCachedAccount(sessionCode, account);
       return { token, sessionCode, account } as unknown as T;
     }
@@ -326,7 +401,7 @@ async function handleClientPersistedRoute<T>(url: string, options: RequestInit =
       throw new Error('Tài khoản này đã bị khóa bởi Quản trị viên.');
     }
     const account = toPublicTeacher(matched);
-    const token = `local-token.${btoa(JSON.stringify({ sub: account.id, role: 'teacher', sessionCode }))}`;
+    const token = `local-token.${encodeBase64Unicode({ sub: account.id, role: 'teacher', sessionCode })}`;
     saveCachedAccount(sessionCode, account);
     return { token, sessionCode, account } as unknown as T;
   }
@@ -336,25 +411,12 @@ async function handleClientPersistedRoute<T>(url: string, options: RequestInit =
     if (cachedAuth) {
       return cachedAuth as unknown as T;
     }
-    if (auth.currentUser) {
-      const account: TeacherAccount = {
-        id: auth.currentUser.uid,
-        username: auth.currentUser.email || 'admin',
-        fullName: auth.currentUser.displayName || auth.currentUser.email || 'Administrator',
-        role: 'admin',
-        active: true,
-        permissions: FULL_ADMIN_PERMS,
-        createdAt: Date.now()
-      };
-      saveCachedAccount(sessionCode, account);
-      return { sessionCode, account } as unknown as T;
-    }
     throw new Error('Phiên đăng nhập đã hết hạn.');
   }
 
   // 5. GET /api/workspace
   if (pathname === '/api/workspace' && method === 'GET') {
-    const store = await syncFromCloudIfAuthenticated(sessionCode);
+    const store = await syncWithSharedCloud(sessionCode);
     return {
       sessionCode: store.sessionCode,
       examProfiles: store.examProfiles,
@@ -377,9 +439,7 @@ async function handleClientPersistedRoute<T>(url: string, options: RequestInit =
         ? store.examProfiles.map(p => (p.id === profile.id ? profile : p))
         : [profile, ...store.examProfiles];
       saveLocalWorkspace(store);
-      if (auth.currentUser && auth.currentUser.emailVerified) {
-        await upsertFirestoreProfile(sessionCode, profile).catch(() => {});
-      }
+      await upsertFirestoreProfile(sessionCode, profile);
       return { profile } as unknown as T;
     }
     if (method === 'DELETE') {
@@ -388,9 +448,7 @@ async function handleClientPersistedRoute<T>(url: string, options: RequestInit =
       }
       store.examProfiles = store.examProfiles.filter(p => p.id !== profileId);
       saveLocalWorkspace(store);
-      if (auth.currentUser && auth.currentUser.emailVerified) {
-        await deleteFirestoreProfile(sessionCode, profileId).catch(() => {});
-      }
+      await deleteFirestoreProfile(sessionCode, profileId);
       return { ok: true } as unknown as T;
     }
   }
@@ -428,17 +486,13 @@ async function handleClientPersistedRoute<T>(url: string, options: RequestInit =
         ? store.allResults.map(r => (r.id === finalRecord.id ? finalRecord : r))
         : [finalRecord, ...store.allResults];
       saveLocalWorkspace(store);
-      if (auth.currentUser && auth.currentUser.emailVerified) {
-        await upsertFirestoreResult(sessionCode, finalRecord).catch(() => {});
-      }
+      await upsertFirestoreResult(sessionCode, finalRecord);
       return { record: finalRecord, wasUpdated: Boolean(duplicate) } as unknown as T;
     }
     if (method === 'DELETE') {
       store.allResults = store.allResults.filter(r => r.id !== resultId);
       saveLocalWorkspace(store);
-      if (auth.currentUser && auth.currentUser.emailVerified) {
-        await deleteFirestoreResult(sessionCode, resultId).catch(() => {});
-      }
+      await deleteFirestoreResult(sessionCode, resultId);
       return { ok: true } as unknown as T;
     }
   }
@@ -453,9 +507,7 @@ async function handleClientPersistedRoute<T>(url: string, options: RequestInit =
       if (item && item.id && item.title) {
         const clean = { ...item, updatedAt: Date.now() };
         byId.set(item.id, clean);
-        if (auth.currentUser && auth.currentUser.emailVerified) {
-          await upsertFirestoreTask(sessionCode, clean).catch(() => {});
-        }
+        await upsertFirestoreTask(sessionCode, clean);
       }
     }
     store.tasks = Array.from(byId.values()).sort((a, b) => b.createdAt - a.createdAt);
@@ -474,17 +526,13 @@ async function handleClientPersistedRoute<T>(url: string, options: RequestInit =
         ? store.tasks.map(t => (t.id === cleanTask.id ? cleanTask : t))
         : [cleanTask, ...store.tasks];
       saveLocalWorkspace(store);
-      if (auth.currentUser && auth.currentUser.emailVerified) {
-        await upsertFirestoreTask(sessionCode, cleanTask).catch(() => {});
-      }
+      await upsertFirestoreTask(sessionCode, cleanTask);
       return { task: cleanTask } as unknown as T;
     }
     if (method === 'DELETE') {
       store.tasks = store.tasks.filter(t => t.id !== taskId);
       saveLocalWorkspace(store);
-      if (auth.currentUser && auth.currentUser.emailVerified) {
-        await deleteFirestoreTask(sessionCode, taskId).catch(() => {});
-      }
+      await deleteFirestoreTask(sessionCode, taskId);
       return { ok: true } as unknown as T;
     }
   }
@@ -499,11 +547,9 @@ async function handleClientPersistedRoute<T>(url: string, options: RequestInit =
       updatedAt: Date.now()
     };
     saveLocalWorkspace(store);
-    if (auth.currentUser && auth.currentUser.emailVerified) {
-      await updateFirestoreWorkspaceMeta(sessionCode, {
-        systemBranding: store.systemBranding
-      }).catch(() => {});
-    }
+    await updateFirestoreWorkspaceMeta(sessionCode, {
+      systemBranding: store.systemBranding
+    });
     return { systemBranding: store.systemBranding } as unknown as T;
   }
 
@@ -513,11 +559,9 @@ async function handleClientPersistedRoute<T>(url: string, options: RequestInit =
     const store = loadLocalWorkspace(sessionCode);
     store.googleSheetWebhookUrl = rawUrl;
     saveLocalWorkspace(store);
-    if (auth.currentUser && auth.currentUser.emailVerified) {
-      await updateFirestoreWorkspaceMeta(sessionCode, {
-        googleSheetWebhookUrl: rawUrl
-      }).catch(() => {});
-    }
+    await updateFirestoreWorkspaceMeta(sessionCode, {
+      googleSheetWebhookUrl: rawUrl
+    });
     return { webhookUrl: rawUrl } as unknown as T;
   }
 
@@ -540,9 +584,7 @@ async function handleClientPersistedRoute<T>(url: string, options: RequestInit =
       store.tasks = body.tasks;
     }
     saveLocalWorkspace(store);
-    if (auth.currentUser && auth.currentUser.emailVerified) {
-      await pushAllLocalToFirestore(sessionCode).catch(() => {});
-    }
+    await pushAllLocalToFirestore(sessionCode);
     return {
       examProfiles: store.examProfiles,
       allResults: store.allResults,
@@ -561,7 +603,7 @@ async function handleClientPersistedRoute<T>(url: string, options: RequestInit =
     if (!username || !password || !fullName) {
       throw new Error('Vui lòng nhập đầy đủ Họ tên, Tên đăng nhập và Mật khẩu.');
     }
-    const store = loadLocalWorkspace(sessionCode);
+    const store = await syncWithSharedCloud(sessionCode);
     if (
       username.toLowerCase() === 'admin' ||
       store.teacherAccounts.some(a => a.username.toLowerCase() === username.toLowerCase())
@@ -586,16 +628,14 @@ async function handleClientPersistedRoute<T>(url: string, options: RequestInit =
     };
     store.teacherAccounts = [created, ...store.teacherAccounts];
     saveLocalWorkspace(store);
-    if (auth.currentUser && auth.currentUser.emailVerified) {
-      await upsertFirestoreTeacher(sessionCode, created).catch(() => {});
-    }
+    await upsertFirestoreTeacher(sessionCode, created);
     return { account: toPublicTeacher(created) } as unknown as T;
   }
 
   // 14. PATCH / DELETE /api/accounts/:id
   if (pathname.startsWith('/api/accounts/')) {
     const accountId = decodeURIComponent(pathname.replace('/api/accounts/', ''));
-    const store = loadLocalWorkspace(sessionCode);
+    const store = await syncWithSharedCloud(sessionCode);
     if (method === 'PATCH') {
       const target = store.teacherAccounts.find(a => a.id === accountId);
       if (!target) throw new Error('Không tìm thấy tài khoản.');
@@ -607,94 +647,18 @@ async function handleClientPersistedRoute<T>(url: string, options: RequestInit =
         target.passwordHash = simpleHash(body.newPassword.trim());
       }
       saveLocalWorkspace(store);
-      if (auth.currentUser && auth.currentUser.emailVerified) {
-        await upsertFirestoreTeacher(sessionCode, target).catch(() => {});
-      }
+      await upsertFirestoreTeacher(sessionCode, target);
       return { account: toPublicTeacher(target) } as unknown as T;
     }
     if (method === 'DELETE') {
       store.teacherAccounts = store.teacherAccounts.filter(a => a.id !== accountId);
       saveLocalWorkspace(store);
-      if (auth.currentUser && auth.currentUser.emailVerified) {
-        await deleteFirestoreTeacher(sessionCode, accountId).catch(() => {});
-      }
+      await deleteFirestoreTeacher(sessionCode, accountId);
       return { ok: true } as unknown as T;
     }
   }
 
   return null;
-}
-
-/**
- * Mirror successful backend API responses into localStorage & Firebase Firestore
- * so that data is always backed up both locally and in the cloud!
- */
-async function mirrorSuccessToLocalAndCloud(url: string, options: RequestInit, responseData: any): Promise<void> {
-  const method = (options.method || 'GET').toUpperCase();
-  const parsedUrl = new URL(url, typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000');
-  const pathname = parsedUrl.pathname;
-  const cachedAuth = getCachedAccount();
-  const sessionCode = sanitizeCode(responseData?.sessionCode || cachedAuth?.sessionCode || 'CAMBRIDGE-2026');
-
-  if ((pathname === '/api/auth/login' || pathname === '/api/auth/setup-admin') && responseData?.account) {
-    saveCachedAccount(sessionCode, responseData.account);
-    if (pathname === '/api/auth/setup-admin' && options.body) {
-      const body = JSON.parse(String(options.body));
-      const store = loadLocalWorkspace(sessionCode);
-      store.adminFullName = responseData.account.fullName || 'Administrator';
-      if (body?.password) {
-        store.adminPasswordHash = simpleHash(String(body.password).trim());
-      }
-      saveLocalWorkspace(store);
-    }
-    return;
-  }
-
-  if (pathname === '/api/workspace' && method === 'GET' && responseData?.examProfiles) {
-    const local = loadLocalWorkspace(sessionCode);
-    // Merge server & local/cloud data so whichever has more recent or richer data wins
-    const merged: CloudWorkspaceSnapshot = {
-      ...local,
-      sessionCode,
-      examProfiles:
-        Array.isArray(responseData.examProfiles) && responseData.examProfiles.length >= local.examProfiles.length
-          ? responseData.examProfiles
-          : local.examProfiles,
-      allResults:
-        Array.isArray(responseData.allResults) && responseData.allResults.length >= local.allResults.length
-          ? responseData.allResults
-          : local.allResults,
-      tasks:
-        Array.isArray(responseData.tasks) && responseData.tasks.length > 0 ? responseData.tasks : local.tasks,
-      systemBranding: responseData.systemBranding || local.systemBranding,
-      googleSheetWebhookUrl:
-        responseData.googleSheetWebhookUrl && responseData.googleSheetWebhookUrl !== 'CONFIGURED'
-          ? responseData.googleSheetWebhookUrl
-          : local.googleSheetWebhookUrl
-    };
-    saveLocalWorkspace(merged);
-
-    if (auth.currentUser && auth.currentUser.emailVerified) {
-      const cloud = await ensureFirestoreWorkspace(sessionCode, merged).catch(() => null);
-      if (cloud) {
-        if (cloud.examProfiles.length > merged.examProfiles.length) responseData.examProfiles = cloud.examProfiles;
-        if (cloud.allResults.length > merged.allResults.length) responseData.allResults = cloud.allResults;
-        if (cloud.tasks.length > 0) responseData.tasks = cloud.tasks;
-        saveLocalWorkspace({
-          ...merged,
-          examProfiles: responseData.examProfiles,
-          allResults: responseData.allResults,
-          tasks: responseData.tasks
-        });
-      }
-    }
-    return;
-  }
-
-  // For mutations, also run the client/cloud persistence update so localStorage and Firestore stay 100% synced
-  if (method !== 'GET' && !pathname.startsWith('/api/ai/')) {
-    await handleClientPersistedRoute(url, options).catch(() => {});
-  }
 }
 
 export async function apiRequest<T>(url: string, options: RequestInit = {}): Promise<T> {
@@ -706,40 +670,42 @@ export async function apiRequest<T>(url: string, options: RequestInit = {}): Pro
     headers.set('Authorization', `Bearer ${authToken}`);
   }
 
-  try {
-    const res = await fetch(url, {
-      ...options,
-      headers
-    });
-
-    const contentType = res.headers.get('content-type') || '';
-    const isJson = contentType.includes('application/json');
-
-    if (res.ok && isJson) {
-      const data = await res.json();
-      await mirrorSuccessToLocalAndCloud(url, options, data).catch(() => {});
-      return data as T;
-    }
-
-    // If running on Vercel static deployment (where /api/* returns 404/405/HTML) or token rotated,
-    // handle workspace & auth persistence directly via Firestore + localStorage!
-    if (!url.startsWith('/api/ai/')) {
-      const fallbackResult = await handleClientPersistedRoute<T>(url, options);
-      if (fallbackResult !== null) {
-        return fallbackResult;
+  // For all workspace data, auth, and teacher account operations, use Shared Cloud Firestore directly
+  // as the primary multi-user database so data is 100% persisted across AI Studio and Vercel!
+  if (!url.startsWith('/api/ai/') && !url.startsWith('/api/sheets/')) {
+    try {
+      const cloudResult = await handleSharedCloudDataRoute<T>(url, options);
+      if (cloudResult !== null) {
+        // Also mirror to backend Express disk storage in the background when available
+        fetch(url, { ...options, headers }).catch(() => {});
+        return cloudResult;
       }
+    } catch (cloudErr) {
+      throw cloudErr;
     }
-
-    const data = isJson ? await res.json().catch(() => ({})) : {};
-    const message = typeof data?.error === 'string' ? data.error : `Lỗi máy chủ (${res.status})`;
-    throw new Error(message);
-  } catch (networkOrRouteErr: any) {
-    if (!url.startsWith('/api/ai/')) {
-      const fallbackResult = await handleClientPersistedRoute<T>(url, options);
-      if (fallbackResult !== null) {
-        return fallbackResult;
-      }
-    }
-    throw networkOrRouteErr;
   }
+
+  // For AI endpoints (/api/ai/*) and Google Sheets proxy (/api/sheets/*), call the server endpoint
+  const res = await fetch(url, {
+    ...options,
+    headers
+  });
+
+  const contentType = res.headers.get('content-type') || '';
+  const isJson = contentType.includes('application/json');
+
+  if (res.ok && isJson) {
+    const data = await res.json();
+    return data as T;
+  }
+
+  const data = isJson ? await res.json().catch(() => ({})) : {};
+  if (res.status === 413) {
+    throw new Error('Dung lượng ảnh đề thi quá lớn (vượt giới hạn 4.5MB của máy chủ). Hệ thống sẽ tự nén nhỏ hơn, vui lòng thử lại.');
+  }
+  const message =
+    typeof data?.error === 'string'
+      ? data.error
+      : `Lỗi kết nối AI máy chủ (HTTP ${res.status}). Nếu bạn đang chạy trên Vercel, hãy kiểm tra biến môi trường GEMINI_API_KEY và Redeploy.`;
+  throw new Error(message);
 }

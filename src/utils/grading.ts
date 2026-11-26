@@ -103,7 +103,7 @@ export function compressImageFile(
 export async function renderPdfToPageImages(
   file: File,
   maxPages = 100,
-  scale = 1.45
+  scale = 1.25
 ): Promise<Array<{ pageNum: number; dataUrl: string; base64: string }>> {
   const [pdfjsLib, arrayBuffer] = await Promise.all([getPdfJs(), file.arrayBuffer()]);
   const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
@@ -119,7 +119,7 @@ export async function renderPdfToPageImages(
     const ctx = canvas.getContext('2d');
     if (!ctx) continue;
     await page.render({ canvasContext: ctx, viewport, canvas }).promise;
-    const dataUrl = canvas.toDataURL('image/jpeg', 0.84);
+    const dataUrl = canvas.toDataURL('image/jpeg', 0.74);
     pages.push({
       pageNum,
       dataUrl,
@@ -131,10 +131,10 @@ export async function renderPdfToPageImages(
 
 export async function fileToBase64Images(file: File, maxPages = 10): Promise<string[]> {
   if (file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf')) {
-    const pages = await renderPdfToPageImages(file, maxPages, 1.55);
+    const pages = await renderPdfToPageImages(file, maxPages, 1.2);
     return pages.map(p => p.base64);
   }
-  const compressed = await compressImageFile(file, 1400, 0.86);
+  const compressed = await compressImageFile(file, 1150, 0.78);
   return [compressed.base64];
 }
 

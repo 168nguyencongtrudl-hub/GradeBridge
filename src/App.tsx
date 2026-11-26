@@ -29,7 +29,6 @@ import {
   ReviewStudentModal,
   TeacherAccountsModal
 } from './components/Modals';
-import { auth, onAuthStateChanged, signInWithGooglePopup, signOutFirebase, type User } from './firebase';
 import { apiRequest, getAuthToken, pushAllLocalToFirestore, setAuthToken } from './utils/api';
 import { checkHybridAnswerMatch, computeCambridgeShields } from './utils/grading';
 import { DEFAULT_SYSTEM_BRANDING, INITIAL_EXAM_PROFILES } from './data/initialData';
@@ -50,7 +49,7 @@ export default function App() {
   const [teacherName, setTeacherName] = useState('Administrator');
   const [lang, setLang] = useState<UiLang>('vi');
 
-  // Core workspace state (persisted on server)
+  // Core workspace state (persisted on server & shared Firestore)
   const [examProfiles, setExamProfiles] = useState<ExamProfile[]>(INITIAL_EXAM_PROFILES);
   const [selectedProfileId, setSelectedProfileId] = useState<string>(INITIAL_EXAM_PROFILES[0].id);
   const [allResults, setAllResults] = useState<StudentResult[]>([]);
@@ -92,15 +91,7 @@ export default function App() {
     [currentAccount]
   );
 
-  const [cloudUser, setCloudUser] = useState<User | null>(null);
   const [cloudSyncing, setCloudSyncing] = useState(false);
-
-  useEffect(() => {
-    const unsub = onAuthStateChanged(auth, user => {
-      setCloudUser(user);
-    });
-    return () => unsub();
-  }, []);
 
   // Restore saved session token on startup
   useEffect(() => {
@@ -117,7 +108,7 @@ export default function App() {
       });
   }, []);
 
-  // Load full workspace when authenticated
+  // Load full workspace when authenticated (automatically connects & merges with shared Firestore)
   const loadWorkspace = useCallback(async () => {
     const data = await apiRequest<{
       sessionCode: string;
@@ -144,19 +135,16 @@ export default function App() {
   useEffect(() => {
     if (!currentAccount) return;
     loadWorkspace().catch(err => notify(err?.message || 'Không thể tải dữ liệu phòng thi.', 'error'));
-  }, [currentAccount, cloudUser, loadWorkspace, notify]);
+  }, [currentAccount, loadWorkspace, notify]);
 
-  const handleConnectOrSyncCloud = async () => {
+  const handleRefreshCloud = async () => {
     setCloudSyncing(true);
     try {
-      if (!cloudUser) {
-        await signInWithGooglePopup();
-      }
       await pushAllLocalToFirestore(sessionCode);
       await loadWorkspace();
-      notify('Đã đồng bộ toàn bộ dữ liệu lên đám mây Firebase Firestore.', 'success');
+      notify('Đã đồng bộ dữ liệu chung cho tất cả người dùng.', 'success');
     } catch (err: any) {
-      notify(err?.message || 'Không thể đồng bộ lên đám mây Firebase.', 'error');
+      notify(err?.message || 'Không thể đồng bộ dữ liệu.', 'error');
     } finally {
       setCloudSyncing(false);
     }
@@ -180,7 +168,6 @@ export default function App() {
     setAuthToken(null);
     setCurrentAccount(null);
     setMobileMenuOpen(false);
-    signOutFirebase().catch(() => {});
   };
 
   // Derived data
@@ -607,26 +594,18 @@ export default function App() {
         <button
           type="button"
           disabled={cloudSyncing}
-          onClick={handleConnectOrSyncCloud}
-          className={`w-full px-3 py-2 rounded-lg border text-xs font-medium flex items-center justify-center gap-1.5 transition-colors ${
-            cloudUser
-              ? 'border-emerald-200 bg-emerald-50 text-emerald-900 hover:bg-emerald-100'
-              : 'border-indigo-200 bg-indigo-50 text-indigo-900 hover:bg-indigo-100'
-          }`}
+          onClick={handleRefreshCloud}
+          className="w-full px-3 py-2 rounded-lg border border-emerald-200 bg-emerald-50 text-emerald-900 hover:bg-emerald-100 text-xs font-medium flex items-center justify-center gap-1.5 transition-colors"
         >
           <Cloud className="w-3.5 h-3.5 shrink-0" />
           <span className="truncate">
             {cloudSyncing
               ? isEn
-                ? 'Syncing Cloud...'
-                : 'Đang đồng bộ Cloud...'
-              : cloudUser
-                ? isEn
-                  ? 'Firebase Cloud Connected · Sync'
-                  : 'Đã lưu Cloud · Đồng bộ ngay'
-                : isEn
-                  ? 'Connect Google Cloud Sync'
-                  : 'Kết nối Cloud (Lưu dữ liệu)'}
+                ? 'Syncing Shared Cloud...'
+                : 'Đang đồng bộ dữ liệu...'
+              : isEn
+                ? 'Shared Cloud Active · Refresh'
+                : 'Tự động lưu Cloud · Làm mới'}
           </span>
         </button>
 
