@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <script>
+      (function () {
+        try {
+          var desc = Object.getOwnPropertyDescriptor(window, 'fetch') ||
+            Object.getOwnPropertyDescriptor(Object.getPrototypeOf(window), 'fetch');
+          if (desc && desc.get && !desc.set && desc.configurable !== false) {
+            var nativeFetch = desc.get.call(window);
+            Object.defineProperty(window, 'fetch', {
+              configurable: true,
+              enumerable: true,
+              get: function () {
+                return nativeFetch;
+              },
+              set: function () {
+                // Prevent TypeError when browser extensions attempt to overwrite getter-only window.fetch
+              }
+            });
+          }
+        } catch (_err) {}
+
+        window.addEventListener(
+          'error',
+          function (e) {
+            var src = (e && e.filename) || '';
+            var msg = (e && e.message) || '';
+            if (
+              src.indexOf('chrome-extension://') === 0 ||
+              msg.indexOf('Cannot set property fetch of #<Window>') !== -1
+            ) {
+              e.stopImmediatePropagation();
+              e.preventDefault();
+            }
+          },
+          true
+        );
+      })();
+    </script>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Cambridge Grader & Smart Tasks</title>
+    <meta
+      name="description"
+      content="Minimalist Cambridge AI batch exam grading workspace with smart AI task management, A4/A5 answer sheets, multi-teacher collaboration, and Excel reporting."
+    />
+    <meta property="og:title" content="Cambridge Grader & Smart Tasks" />
+    <meta
+      property="og:description"
+      content="Minimalist Cambridge AI batch exam grading workspace with smart AI task management, A4/A5 answer sheets, multi-teacher collaboration, and Excel reporting."
+    />
+    <meta property="og:type" content="website" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=JetBrains+Mono:wght@400;500;600&family=Plus+Jakarta+Sans:wght@500;600;700;800&display=swap"
+      rel="stylesheet"
+    />
+  </head>
+  <body class="bg-[#FAFAFA] text-slate-900 antialiased selection:bg-indigo-100 selection:text-indigo-900">
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

@@ -1,0 +1,10 @@
+{
+  "name": "Remix Cambridge Grader \u0026 Smart Tasks",
+  "description": "Minimalist Cambridge AI batch exam grading workspace with smart AI task management, A4/A5 answer sheets, multi-teacher collaboration, and Excel reporting.",
+  "requestFramePermissions": [
+    "camera"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
