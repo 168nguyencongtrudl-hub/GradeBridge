@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
-import { ArrowRight, KeyRound, Lock, ShieldCheck } from 'lucide-react';
-import { apiRequest } from '../utils/api';
+import { ArrowRight, Cloud, KeyRound, Lock, ShieldCheck } from 'lucide-react';
+import { signInWithGooglePopup } from '../firebase';
+import { apiRequest, pushAllLocalToFirestore, saveCachedAccount } from '../utils/api';
 import type { SystemBranding, TeacherAccount } from '../types';
 
 interface AuthViewProps {
@@ -23,6 +24,7 @@ export function AuthView({ initialSessionCode, onAuthenticated }: AuthViewProps)
   const [confirmPassword, setConfirmPassword] = useState('');
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [cloudLoading, setCloudLoading] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -45,6 +47,41 @@ export function AuthView({ initialSessionCode, onAuthenticated }: AuthViewProps)
       active = false;
     };
   }, [sessionCode]);
+
+  const handleGoogleCloudSignIn = async () => {
+    setError('');
+    setCloudLoading(true);
+    try {
+      const user = await signInWithGooglePopup();
+      await pushAllLocalToFirestore(sessionCode).catch(() => {});
+      const account: TeacherAccount = {
+        id: user.uid,
+        username: user.email || 'admin',
+        fullName: user.displayName || user.email || 'Administrator',
+        role: 'admin',
+        active: true,
+        permissions: {
+          canGrade: true,
+          canViewExport: true,
+          canPrintSheet: true,
+          canManageExams: true,
+          canDeleteResults: true
+        },
+        createdAt: Date.now()
+      };
+      const token = await user.getIdToken();
+      saveCachedAccount(sessionCode, account);
+      onAuthenticated({
+        token,
+        sessionCode,
+        account
+      });
+    } catch (err: any) {
+      setError(err?.message || 'Không thể đăng nhập với Google Cloud.');
+    } finally {
+      setCloudLoading(false);
+    }
+  };
 
   const handleSetupAdmin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -143,9 +180,31 @@ export function AuthView({ initialSessionCode, onAuthenticated }: AuthViewProps)
           </p>
         </div>
 
-        <div className="bg-white border border-neutral-200 rounded-2xl p-6 sm:p-7">
+        <div className="bg-white border border-neutral-200 rounded-2xl p-6 sm:p-7 space-y-5">
+          <button
+            type="button"
+            disabled={cloudLoading || submitting}
+            onClick={handleGoogleCloudSignIn}
+            className="w-full py-2.5 px-4 rounded-lg border border-neutral-300 bg-white hover:bg-neutral-50 disabled:opacity-60 text-slate-900 text-xs font-semibold flex items-center justify-center gap-2 transition-colors"
+          >
+            <Cloud className="w-4 h-4 text-indigo-600" />
+            <span>
+              {cloudLoading
+                ? 'Đang kết nối Firebase Cloud...'
+                : 'Đăng nhập Google (Lưu & Đồng bộ dữ liệu Cloud)'}
+            </span>
+          </button>
+
+          <div className="relative flex items-center justify-center">
+            <div className="border-t border-neutral-200 w-full" />
+            <span className="bg-white px-2.5 text-[11px] text-slate-400 whitespace-nowrap">
+              hoặc dùng tài khoản mật khẩu
+            </span>
+            <div className="border-t border-neutral-200 w-full" />
+          </div>
+
           {adminConfigured === null ? (
-            <div className="py-10 text-center text-sm text-slate-400">
+            <div className="py-6 text-center text-sm text-slate-400">
               Đang kiểm tra trạng thái hệ thống...
             </div>
           ) : isSetupMode ? (

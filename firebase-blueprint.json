@@ -1,0 +1,568 @@
+{
+  "entities": {
+    "AdminRecord": {
+      "title": "AdminRecord",
+      "description": "Trusted administrator membership document keyed by Firebase Auth UID.",
+      "type": "object",
+      "properties": {
+        "ownerId": {
+          "type": "string",
+          "description": "UID of the administrator",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server creation timestamp"
+        }
+      },
+      "required": ["ownerId", "createdAt"]
+    },
+    "Workspace": {
+      "title": "Workspace",
+      "description": "Root workspace room document storing branding, admin hash, and sheet sync settings.",
+      "type": "object",
+      "properties": {
+        "sessionCode": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "ownerId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "adminFullName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "adminPasswordHash": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 256
+        },
+        "appName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "appSubtitle": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 200
+        },
+        "logoDataUrl": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 350000
+        },
+        "logoWidth": {
+          "type": "integer"
+        },
+        "logoHeight": {
+          "type": "integer"
+        },
+        "sheetHeaderTitle": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 200
+        },
+        "sheetFooterNote": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 300
+        },
+        "googleSheetWebhookUrl": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 500
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "sessionCode",
+        "ownerId",
+        "adminFullName",
+        "adminPasswordHash",
+        "appName",
+        "appSubtitle",
+        "logoDataUrl",
+        "logoWidth",
+        "logoHeight",
+        "sheetHeaderTitle",
+        "sheetFooterNote",
+        "googleSheetWebhookUrl",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "ExamProfile": {
+      "title": "ExamProfile",
+      "description": "Cambridge exam profile and 1-page answer sheet structure stored under a workspace.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "workspaceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "ownerId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "schoolName": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 200
+        },
+        "gradeName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "classLabel": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 120
+        },
+        "examTitle": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 250
+        },
+        "examLevel": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 120
+        },
+        "pagesPerStudent": {
+          "type": "integer"
+        },
+        "maxScore": {
+          "type": "number"
+        },
+        "sourceFileName": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 250
+        },
+        "rawAnswerKeyText": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 50000
+        },
+        "parts": {
+          "type": "array",
+          "description": "Structured exam parts (bounded to at most 30 parts)"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "id",
+        "workspaceId",
+        "ownerId",
+        "schoolName",
+        "gradeName",
+        "classLabel",
+        "examTitle",
+        "examLevel",
+        "pagesPerStudent",
+        "maxScore",
+        "sourceFileName",
+        "rawAnswerKeyText",
+        "parts",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "StudentResult": {
+      "title": "StudentResult",
+      "description": "Graded student exam result under a workspace.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "workspaceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "ownerId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "profileId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "stt": {
+          "type": "integer"
+        },
+        "studentName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "className": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 120
+        },
+        "schoolName": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 200
+        },
+        "gradeName": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 120
+        },
+        "examTitle": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 250
+        },
+        "score": {
+          "type": "number"
+        },
+        "correctCount": {
+          "type": "integer"
+        },
+        "totalQuestions": {
+          "type": "integer"
+        },
+        "shields": {
+          "type": "integer"
+        },
+        "listeningScore": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 60
+        },
+        "rwScore": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 60
+        },
+        "sectionBreakdown": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 300
+        },
+        "teacherNote": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1000
+        },
+        "gradedBy": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 160
+        },
+        "reviewed": {
+          "type": "boolean"
+        },
+        "questions": {
+          "type": "array",
+          "description": "Graded question items (bounded to at most 200 questions)"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "id",
+        "workspaceId",
+        "ownerId",
+        "profileId",
+        "stt",
+        "studentName",
+        "className",
+        "schoolName",
+        "gradeName",
+        "examTitle",
+        "score",
+        "correctCount",
+        "totalQuestions",
+        "shields",
+        "listeningScore",
+        "rwScore",
+        "sectionBreakdown",
+        "teacherNote",
+        "gradedBy",
+        "reviewed",
+        "questions",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "SmartTask": {
+      "title": "SmartTask",
+      "description": "Smart task item managed by teachers and coordinators in a workspace.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "workspaceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "ownerId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 300
+        },
+        "description": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 1500
+        },
+        "status": {
+          "type": "string",
+          "enum": ["todo", "in_progress", "done"],
+          "minLength": 1,
+          "maxLength": 20
+        },
+        "priority": {
+          "type": "string",
+          "enum": ["urgent", "high", "medium", "low"],
+          "minLength": 1,
+          "maxLength": 20
+        },
+        "category": {
+          "type": "string",
+          "enum": ["grading", "preparation", "follow_up", "admin", "general"],
+          "minLength": 1,
+          "maxLength": 30
+        },
+        "dueDate": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 40
+        },
+        "estimatedMinutes": {
+          "type": "integer"
+        },
+        "focusMinutesLogged": {
+          "type": "integer"
+        },
+        "assignee": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 160
+        },
+        "linkedProfileId": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 128
+        },
+        "linkedStudentId": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 128
+        },
+        "aiReason": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 500
+        },
+        "subtasks": {
+          "type": "array",
+          "description": "Subtask checklist items (bounded to at most 30 subtasks)"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "id",
+        "workspaceId",
+        "ownerId",
+        "title",
+        "description",
+        "status",
+        "priority",
+        "category",
+        "dueDate",
+        "estimatedMinutes",
+        "focusMinutesLogged",
+        "assignee",
+        "linkedProfileId",
+        "linkedStudentId",
+        "aiReason",
+        "subtasks",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "TeacherAccount": {
+      "title": "TeacherAccount",
+      "description": "Teacher account credentials and permissions scoped to a workspace.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "workspaceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "ownerId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "username": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "fullName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "active": {
+          "type": "boolean"
+        },
+        "passwordHash": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "canGrade": {
+          "type": "boolean"
+        },
+        "canViewExport": {
+          "type": "boolean"
+        },
+        "canPrintSheet": {
+          "type": "boolean"
+        },
+        "canManageExams": {
+          "type": "boolean"
+        },
+        "canDeleteResults": {
+          "type": "boolean"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "id",
+        "workspaceId",
+        "ownerId",
+        "username",
+        "fullName",
+        "active",
+        "passwordHash",
+        "canGrade",
+        "canViewExport",
+        "canPrintSheet",
+        "canManageExams",
+        "canDeleteResults",
+        "createdAt",
+        "updatedAt"
+      ]
+    }
+  },
+  "firestore": {
+    "/admins/{adminId}": {
+      "schema": "AdminRecord",
+      "description": "Trusted administrator membership documents."
+    },
+    "/workspaces/{workspaceId}": {
+      "schema": "Workspace",
+      "description": "Root workspace room documents."
+    },
+    "/workspaces/{workspaceId}/profiles/{profileId}": {
+      "schema": "ExamProfile",
+      "description": "Cambridge exam profile subcollection under a workspace."
+    },
+    "/workspaces/{workspaceId}/results/{resultId}": {
+      "schema": "StudentResult",
+      "description": "Student grading result subcollection under a workspace."
+    },
+    "/workspaces/{workspaceId}/tasks/{taskId}": {
+      "schema": "SmartTask",
+      "description": "Smart task subcollection under a workspace."
+    },
+    "/workspaces/{workspaceId}/teachers/{teacherId}": {
+      "schema": "TeacherAccount",
+      "description": "Teacher account subcollection under a workspace."
+    }
+  }
+}

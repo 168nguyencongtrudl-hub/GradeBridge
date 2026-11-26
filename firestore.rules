@@ -1,0 +1,562 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Pillar 4.1: Global Safety Net (Default-Deny Catch-All)
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Phase 3: Hardened Global Helpers
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null && request.auth.token.email_verified == true;
+    }
+
+    function isAdmin() {
+      return isSignedIn() && (
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid)) ||
+        request.auth.token.email == "168nguyencongtru.dl@gmail.com"
+      );
+    }
+
+    function isWorkspaceOwner(workspaceId) {
+      return exists(/databases/$(database)/documents/workspaces/$(workspaceId)) &&
+        get(/databases/$(database)/documents/workspaces/$(workspaceId)).data.ownerId == request.auth.uid;
+    }
+
+    // Entity Blueprint Validators (Pillar 2)
+    function isValidAdminRecord(data) {
+      return data.keys().hasAll(['ownerId', 'createdAt']) &&
+        data.keys().hasOnly(['ownerId', 'createdAt']) &&
+        isValidId(data.ownerId) &&
+        data.ownerId == request.auth.uid &&
+        data.createdAt is timestamp;
+    }
+
+    function isValidWorkspace(data) {
+      return data.keys().hasAll([
+          'sessionCode',
+          'ownerId',
+          'adminFullName',
+          'adminPasswordHash',
+          'appName',
+          'appSubtitle',
+          'logoDataUrl',
+          'logoWidth',
+          'logoHeight',
+          'sheetHeaderTitle',
+          'sheetFooterNote',
+          'googleSheetWebhookUrl',
+          'createdAt',
+          'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'sessionCode',
+          'ownerId',
+          'adminFullName',
+          'adminPasswordHash',
+          'appName',
+          'appSubtitle',
+          'logoDataUrl',
+          'logoWidth',
+          'logoHeight',
+          'sheetHeaderTitle',
+          'sheetFooterNote',
+          'googleSheetWebhookUrl',
+          'createdAt',
+          'updatedAt'
+        ]) &&
+        data.sessionCode is string && data.sessionCode.size() >= 1 && data.sessionCode.size() <= 64 && data.sessionCode.matches('^[a-zA-Z0-9_\\-]+$') &&
+        isValidId(data.ownerId) &&
+        data.ownerId == request.auth.uid &&
+        data.adminFullName is string && data.adminFullName.size() >= 1 && data.adminFullName.size() <= 120 &&
+        data.adminPasswordHash is string && data.adminPasswordHash.size() <= 256 &&
+        data.appName is string && data.appName.size() >= 1 && data.appName.size() <= 120 &&
+        data.appSubtitle is string && data.appSubtitle.size() <= 200 &&
+        data.logoDataUrl is string && data.logoDataUrl.size() <= 350000 &&
+        data.logoWidth is int && data.logoWidth >= 16 && data.logoWidth <= 200 &&
+        data.logoHeight is int && data.logoHeight >= 16 && data.logoHeight <= 200 &&
+        data.sheetHeaderTitle is string && data.sheetHeaderTitle.size() <= 200 &&
+        data.sheetFooterNote is string && data.sheetFooterNote.size() <= 300 &&
+        data.googleSheetWebhookUrl is string && data.googleSheetWebhookUrl.size() <= 500 &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidExamProfile(data) {
+      return data.keys().hasAll([
+          'id',
+          'workspaceId',
+          'ownerId',
+          'schoolName',
+          'gradeName',
+          'classLabel',
+          'examTitle',
+          'examLevel',
+          'pagesPerStudent',
+          'maxScore',
+          'sourceFileName',
+          'rawAnswerKeyText',
+          'parts',
+          'createdAt',
+          'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'id',
+          'workspaceId',
+          'ownerId',
+          'schoolName',
+          'gradeName',
+          'classLabel',
+          'examTitle',
+          'examLevel',
+          'pagesPerStudent',
+          'maxScore',
+          'sourceFileName',
+          'rawAnswerKeyText',
+          'parts',
+          'createdAt',
+          'updatedAt'
+        ]) &&
+        isValidId(data.id) &&
+        isValidId(data.workspaceId) &&
+        isValidId(data.ownerId) &&
+        data.ownerId == request.auth.uid &&
+        data.schoolName is string && data.schoolName.size() <= 200 &&
+        data.gradeName is string && data.gradeName.size() >= 1 && data.gradeName.size() <= 120 &&
+        data.classLabel is string && data.classLabel.size() <= 120 &&
+        data.examTitle is string && data.examTitle.size() >= 1 && data.examTitle.size() <= 250 &&
+        data.examLevel is string && data.examLevel.size() <= 120 &&
+        data.pagesPerStudent is int && data.pagesPerStudent >= 1 && data.pagesPerStudent <= 50 &&
+        (data.maxScore is int || data.maxScore is float) && data.maxScore >= 1 && data.maxScore <= 1000 &&
+        data.sourceFileName is string && data.sourceFileName.size() <= 250 &&
+        data.rawAnswerKeyText is string && data.rawAnswerKeyText.size() <= 50000 &&
+        data.parts is list && data.parts.size() <= 30 &&
+        (data.parts.size() == 0 || data.parts[0] is map) &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidStudentResult(data) {
+      return data.keys().hasAll([
+          'id',
+          'workspaceId',
+          'ownerId',
+          'profileId',
+          'stt',
+          'studentName',
+          'className',
+          'schoolName',
+          'gradeName',
+          'examTitle',
+          'score',
+          'correctCount',
+          'totalQuestions',
+          'shields',
+          'listeningScore',
+          'rwScore',
+          'sectionBreakdown',
+          'teacherNote',
+          'gradedBy',
+          'reviewed',
+          'questions',
+          'createdAt',
+          'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'id',
+          'workspaceId',
+          'ownerId',
+          'profileId',
+          'stt',
+          'studentName',
+          'className',
+          'schoolName',
+          'gradeName',
+          'examTitle',
+          'score',
+          'correctCount',
+          'totalQuestions',
+          'shields',
+          'listeningScore',
+          'rwScore',
+          'sectionBreakdown',
+          'teacherNote',
+          'gradedBy',
+          'reviewed',
+          'questions',
+          'createdAt',
+          'updatedAt'
+        ]) &&
+        isValidId(data.id) &&
+        isValidId(data.workspaceId) &&
+        isValidId(data.ownerId) &&
+        data.ownerId == request.auth.uid &&
+        isValidId(data.profileId) &&
+        data.stt is int && data.stt >= 0 && data.stt <= 100000 &&
+        data.studentName is string && data.studentName.size() >= 1 && data.studentName.size() <= 160 &&
+        data.className is string && data.className.size() <= 120 &&
+        data.schoolName is string && data.schoolName.size() <= 200 &&
+        data.gradeName is string && data.gradeName.size() <= 120 &&
+        data.examTitle is string && data.examTitle.size() <= 250 &&
+        (data.score is int || data.score is float) && data.score >= 0 && data.score <= 1000 &&
+        data.correctCount is int && data.correctCount >= 0 && data.correctCount <= 500 &&
+        data.totalQuestions is int && data.totalQuestions >= 0 && data.totalQuestions <= 500 &&
+        data.shields is int && data.shields >= 0 && data.shields <= 5 &&
+        data.listeningScore is string && data.listeningScore.size() <= 60 &&
+        data.rwScore is string && data.rwScore.size() <= 60 &&
+        data.sectionBreakdown is string && data.sectionBreakdown.size() <= 300 &&
+        data.teacherNote is string && data.teacherNote.size() <= 1000 &&
+        data.gradedBy is string && data.gradedBy.size() <= 160 &&
+        data.reviewed is bool &&
+        data.questions is list && data.questions.size() <= 200 &&
+        (data.questions.size() == 0 || data.questions[0] is map) &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidSmartTask(data) {
+      return data.keys().hasAll([
+          'id',
+          'workspaceId',
+          'ownerId',
+          'title',
+          'description',
+          'status',
+          'priority',
+          'category',
+          'dueDate',
+          'estimatedMinutes',
+          'focusMinutesLogged',
+          'assignee',
+          'linkedProfileId',
+          'linkedStudentId',
+          'aiReason',
+          'subtasks',
+          'createdAt',
+          'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'id',
+          'workspaceId',
+          'ownerId',
+          'title',
+          'description',
+          'status',
+          'priority',
+          'category',
+          'dueDate',
+          'estimatedMinutes',
+          'focusMinutesLogged',
+          'assignee',
+          'linkedProfileId',
+          'linkedStudentId',
+          'aiReason',
+          'subtasks',
+          'createdAt',
+          'updatedAt'
+        ]) &&
+        isValidId(data.id) &&
+        isValidId(data.workspaceId) &&
+        isValidId(data.ownerId) &&
+        data.ownerId == request.auth.uid &&
+        data.title is string && data.title.size() >= 1 && data.title.size() <= 300 &&
+        data.description is string && data.description.size() <= 1500 &&
+        data.status is string && data.status.size() <= 20 && (data.status == 'todo' || data.status == 'in_progress' || data.status == 'done') &&
+        data.priority is string && data.priority.size() <= 20 && (data.priority == 'urgent' || data.priority == 'high' || data.priority == 'medium' || data.priority == 'low') &&
+        data.category is string && data.category.size() <= 30 && (data.category == 'grading' || data.category == 'preparation' || data.category == 'follow_up' || data.category == 'admin' || data.category == 'general') &&
+        data.dueDate is string && data.dueDate.size() <= 40 &&
+        data.estimatedMinutes is int && data.estimatedMinutes >= 1 && data.estimatedMinutes <= 1440 &&
+        data.focusMinutesLogged is int && data.focusMinutesLogged >= 0 && data.focusMinutesLogged <= 100000 &&
+        data.assignee is string && data.assignee.size() <= 160 &&
+        data.linkedProfileId is string && data.linkedProfileId.size() <= 128 &&
+        data.linkedStudentId is string && data.linkedStudentId.size() <= 128 &&
+        data.aiReason is string && data.aiReason.size() <= 500 &&
+        data.subtasks is list && data.subtasks.size() <= 30 &&
+        (data.subtasks.size() == 0 || data.subtasks[0] is map) &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidTeacherAccount(data) {
+      return data.keys().hasAll([
+          'id',
+          'workspaceId',
+          'ownerId',
+          'username',
+          'fullName',
+          'active',
+          'passwordHash',
+          'canGrade',
+          'canViewExport',
+          'canPrintSheet',
+          'canManageExams',
+          'canDeleteResults',
+          'createdAt',
+          'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'id',
+          'workspaceId',
+          'ownerId',
+          'username',
+          'fullName',
+          'active',
+          'passwordHash',
+          'canGrade',
+          'canViewExport',
+          'canPrintSheet',
+          'canManageExams',
+          'canDeleteResults',
+          'createdAt',
+          'updatedAt'
+        ]) &&
+        isValidId(data.id) &&
+        isValidId(data.workspaceId) &&
+        isValidId(data.ownerId) &&
+        data.ownerId == request.auth.uid &&
+        data.username is string && data.username.size() >= 1 && data.username.size() <= 80 &&
+        data.fullName is string && data.fullName.size() >= 1 && data.fullName.size() <= 160 &&
+        data.active is bool &&
+        data.passwordHash is string && data.passwordHash.size() >= 1 && data.passwordHash.size() <= 256 &&
+        data.canGrade is bool &&
+        data.canViewExport is bool &&
+        data.canPrintSheet is bool &&
+        data.canManageExams is bool &&
+        data.canDeleteResults is bool &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    // 1. /admins/{adminId}
+    match /admins/{adminId} {
+      allow get: if isSignedIn() && isValidId(adminId) && (request.auth.uid == adminId || isAdmin());
+      allow list: if isSignedIn() && (resource.data.ownerId == request.auth.uid || isAdmin());
+      allow create: if isSignedIn() && isValidId(adminId) && isValidAdminRecord(incoming()) &&
+        adminId == request.auth.uid &&
+        incoming().createdAt == request.time &&
+        isAdmin();
+      allow update: if isSignedIn() && isValidId(adminId) && isValidAdminRecord(incoming()) &&
+        incoming().ownerId == existing().ownerId &&
+        incoming().createdAt == existing().createdAt &&
+        isAdmin();
+      allow delete: if isSignedIn() && isValidId(adminId) && isAdmin();
+    }
+
+    // 2. /workspaces/{workspaceId}
+    match /workspaces/{workspaceId} {
+      allow get: if isSignedIn() && isValidId(workspaceId) && (existing().ownerId == request.auth.uid || isAdmin());
+      allow list: if isSignedIn() && (resource.data.ownerId == request.auth.uid || isAdmin());
+      allow create: if isSignedIn() && isValidId(workspaceId) && isValidWorkspace(incoming()) &&
+        incoming().sessionCode == workspaceId &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time;
+      allow update: if isSignedIn() && isValidId(workspaceId) && isValidWorkspace(incoming()) &&
+        incoming().ownerId == existing().ownerId &&
+        incoming().sessionCode == existing().sessionCode &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time && (
+          isAdmin() ||
+          (existing().ownerId == request.auth.uid &&
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'adminFullName',
+              'adminPasswordHash',
+              'appName',
+              'appSubtitle',
+              'logoDataUrl',
+              'logoWidth',
+              'logoHeight',
+              'sheetHeaderTitle',
+              'sheetFooterNote',
+              'googleSheetWebhookUrl',
+              'updatedAt'
+            ]))
+        );
+      allow delete: if isSignedIn() && isValidId(workspaceId) && (existing().ownerId == request.auth.uid || isAdmin());
+
+      // 3. /workspaces/{workspaceId}/profiles/{profileId}
+      match /profiles/{profileId} {
+        allow get: if isSignedIn() && isValidId(workspaceId) && isValidId(profileId) &&
+          (existing().ownerId == request.auth.uid || isWorkspaceOwner(workspaceId) || isAdmin());
+        allow list: if isSignedIn() && (resource.data.ownerId == request.auth.uid || isAdmin());
+        allow create: if isSignedIn() && isValidId(workspaceId) && isValidId(profileId) &&
+          isValidExamProfile(incoming()) &&
+          incoming().id == profileId &&
+          incoming().workspaceId == workspaceId &&
+          incoming().createdAt == request.time &&
+          incoming().updatedAt == request.time &&
+          (isWorkspaceOwner(workspaceId) || isAdmin());
+        allow update: if isSignedIn() && isValidId(workspaceId) && isValidId(profileId) &&
+          isValidExamProfile(incoming()) &&
+          incoming().id == existing().id &&
+          incoming().workspaceId == existing().workspaceId &&
+          incoming().ownerId == existing().ownerId &&
+          incoming().createdAt == existing().createdAt &&
+          incoming().updatedAt == request.time && (
+            isAdmin() ||
+            (existing().ownerId == request.auth.uid &&
+              isWorkspaceOwner(workspaceId) &&
+              incoming().diff(existing()).affectedKeys().hasOnly([
+                'schoolName',
+                'gradeName',
+                'classLabel',
+                'examTitle',
+                'examLevel',
+                'pagesPerStudent',
+                'maxScore',
+                'sourceFileName',
+                'rawAnswerKeyText',
+                'parts',
+                'updatedAt'
+              ]))
+          );
+        allow delete: if isSignedIn() && isValidId(workspaceId) && isValidId(profileId) &&
+          (existing().ownerId == request.auth.uid || isWorkspaceOwner(workspaceId) || isAdmin());
+      }
+
+      // 4. /workspaces/{workspaceId}/results/{resultId}
+      match /results/{resultId} {
+        allow get: if isSignedIn() && isValidId(workspaceId) && isValidId(resultId) &&
+          (existing().ownerId == request.auth.uid || isWorkspaceOwner(workspaceId) || isAdmin());
+        allow list: if isSignedIn() && (resource.data.ownerId == request.auth.uid || isAdmin());
+        allow create: if isSignedIn() && isValidId(workspaceId) && isValidId(resultId) &&
+          isValidStudentResult(incoming()) &&
+          incoming().id == resultId &&
+          incoming().workspaceId == workspaceId &&
+          incoming().createdAt == request.time &&
+          incoming().updatedAt == request.time &&
+          exists(/databases/$(database)/documents/workspaces/$(workspaceId)/profiles/$(incoming().profileId)) &&
+          (isWorkspaceOwner(workspaceId) || isAdmin());
+        allow update: if isSignedIn() && isValidId(workspaceId) && isValidId(resultId) &&
+          isValidStudentResult(incoming()) &&
+          incoming().id == existing().id &&
+          incoming().workspaceId == existing().workspaceId &&
+          incoming().ownerId == existing().ownerId &&
+          incoming().profileId == existing().profileId &&
+          incoming().createdAt == existing().createdAt &&
+          incoming().updatedAt == request.time && (
+            isAdmin() ||
+            (existing().ownerId == request.auth.uid &&
+              isWorkspaceOwner(workspaceId) &&
+              incoming().diff(existing()).affectedKeys().hasOnly([
+                'stt',
+                'studentName',
+                'className',
+                'schoolName',
+                'gradeName',
+                'examTitle',
+                'score',
+                'correctCount',
+                'totalQuestions',
+                'shields',
+                'listeningScore',
+                'rwScore',
+                'sectionBreakdown',
+                'teacherNote',
+                'gradedBy',
+                'reviewed',
+                'questions',
+                'updatedAt'
+              ]))
+          );
+        allow delete: if isSignedIn() && isValidId(workspaceId) && isValidId(resultId) &&
+          (existing().ownerId == request.auth.uid || isWorkspaceOwner(workspaceId) || isAdmin());
+      }
+
+      // 5. /workspaces/{workspaceId}/tasks/{taskId}
+      match /tasks/{taskId} {
+        allow get: if isSignedIn() && isValidId(workspaceId) && isValidId(taskId) &&
+          (existing().ownerId == request.auth.uid || isWorkspaceOwner(workspaceId) || isAdmin());
+        allow list: if isSignedIn() && (resource.data.ownerId == request.auth.uid || isAdmin());
+        allow create: if isSignedIn() && isValidId(workspaceId) && isValidId(taskId) &&
+          isValidSmartTask(incoming()) &&
+          incoming().id == taskId &&
+          incoming().workspaceId == workspaceId &&
+          incoming().createdAt == request.time &&
+          incoming().updatedAt == request.time &&
+          (isWorkspaceOwner(workspaceId) || isAdmin());
+        allow update: if isSignedIn() && isValidId(workspaceId) && isValidId(taskId) &&
+          isValidSmartTask(incoming()) &&
+          incoming().id == existing().id &&
+          incoming().workspaceId == existing().workspaceId &&
+          incoming().ownerId == existing().ownerId &&
+          incoming().createdAt == existing().createdAt &&
+          incoming().updatedAt == request.time &&
+          (existing().status != 'done' || isAdmin()) && (
+            isAdmin() ||
+            (existing().ownerId == request.auth.uid &&
+              isWorkspaceOwner(workspaceId) &&
+              incoming().diff(existing()).affectedKeys().hasOnly([
+                'title',
+                'description',
+                'status',
+                'priority',
+                'category',
+                'dueDate',
+                'estimatedMinutes',
+                'focusMinutesLogged',
+                'assignee',
+                'linkedProfileId',
+                'linkedStudentId',
+                'aiReason',
+                'subtasks',
+                'updatedAt'
+              ]))
+          );
+        allow delete: if isSignedIn() && isValidId(workspaceId) && isValidId(taskId) &&
+          (existing().ownerId == request.auth.uid || isWorkspaceOwner(workspaceId) || isAdmin());
+      }
+
+      // 6. /workspaces/{workspaceId}/teachers/{teacherId}
+      match /teachers/{teacherId} {
+        allow get: if isSignedIn() && isValidId(workspaceId) && isValidId(teacherId) &&
+          (existing().ownerId == request.auth.uid || isAdmin());
+        allow list: if isSignedIn() && (resource.data.ownerId == request.auth.uid || isAdmin());
+        allow create: if isSignedIn() && isValidId(workspaceId) && isValidId(teacherId) &&
+          isValidTeacherAccount(incoming()) &&
+          incoming().id == teacherId &&
+          incoming().workspaceId == workspaceId &&
+          incoming().createdAt == request.time &&
+          incoming().updatedAt == request.time &&
+          (isWorkspaceOwner(workspaceId) || isAdmin());
+        allow update: if isSignedIn() && isValidId(workspaceId) && isValidId(teacherId) &&
+          isValidTeacherAccount(incoming()) &&
+          incoming().id == existing().id &&
+          incoming().workspaceId == existing().workspaceId &&
+          incoming().ownerId == existing().ownerId &&
+          incoming().username == existing().username &&
+          incoming().createdAt == existing().createdAt &&
+          incoming().updatedAt == request.time && (
+            isAdmin() ||
+            (existing().ownerId == request.auth.uid &&
+              isWorkspaceOwner(workspaceId) &&
+              incoming().diff(existing()).affectedKeys().hasOnly([
+                'fullName',
+                'active',
+                'passwordHash',
+                'canGrade',
+                'canViewExport',
+                'canPrintSheet',
+                'canManageExams',
+                'canDeleteResults',
+                'updatedAt'
+              ]))
+          );
+        allow delete: if isSignedIn() && isValidId(workspaceId) && isValidId(teacherId) &&
+          (existing().ownerId == request.auth.uid || isAdmin());
+      }
+    }
+  }
+}

@@ -3,6 +3,7 @@ import {
   BarChart3,
   Camera,
   CheckSquare,
+  Cloud,
   Database,
   FileSpreadsheet,
   FileText,
@@ -28,7 +29,8 @@ import {
   ReviewStudentModal,
   TeacherAccountsModal
 } from './components/Modals';
-import { apiRequest, getAuthToken, setAuthToken } from './utils/api';
+import { auth, onAuthStateChanged, signInWithGooglePopup, signOutFirebase, type User } from './firebase';
+import { apiRequest, getAuthToken, pushAllLocalToFirestore, setAuthToken } from './utils/api';
 import { checkHybridAnswerMatch, computeCambridgeShields } from './utils/grading';
 import { DEFAULT_SYSTEM_BRANDING, INITIAL_EXAM_PROFILES } from './data/initialData';
 import type {
@@ -90,6 +92,16 @@ export default function App() {
     [currentAccount]
   );
 
+  const [cloudUser, setCloudUser] = useState<User | null>(null);
+  const [cloudSyncing, setCloudSyncing] = useState(false);
+
+  useEffect(() => {
+    const unsub = onAuthStateChanged(auth, user => {
+      setCloudUser(user);
+    });
+    return () => unsub();
+  }, []);
+
   // Restore saved session token on startup
   useEffect(() => {
     if (!getAuthToken()) return;
@@ -132,7 +144,23 @@ export default function App() {
   useEffect(() => {
     if (!currentAccount) return;
     loadWorkspace().catch(err => notify(err?.message || 'Không thể tải dữ liệu phòng thi.', 'error'));
-  }, [currentAccount, loadWorkspace, notify]);
+  }, [currentAccount, cloudUser, loadWorkspace, notify]);
+
+  const handleConnectOrSyncCloud = async () => {
+    setCloudSyncing(true);
+    try {
+      if (!cloudUser) {
+        await signInWithGooglePopup();
+      }
+      await pushAllLocalToFirestore(sessionCode);
+      await loadWorkspace();
+      notify('Đã đồng bộ toàn bộ dữ liệu lên đám mây Firebase Firestore.', 'success');
+    } catch (err: any) {
+      notify(err?.message || 'Không thể đồng bộ lên đám mây Firebase.', 'error');
+    } finally {
+      setCloudSyncing(false);
+    }
+  };
 
   const handleAuthenticated = (res: { token: string; sessionCode: string; account: TeacherAccount }) => {
     setAuthToken(res.token);
@@ -152,6 +180,7 @@ export default function App() {
     setAuthToken(null);
     setCurrentAccount(null);
     setMobileMenuOpen(false);
+    signOutFirebase().catch(() => {});
   };
 
   // Derived data
@@ -574,7 +603,33 @@ export default function App() {
       </nav>
 
       {/* Footer Account & Language */}
-      <div className="p-4 border-t border-neutral-200 space-y-2.5 shrink-0">
+      <div className="p-4 border-t border-neutral-200 space-y-2 shrink-0">
+        <button
+          type="button"
+          disabled={cloudSyncing}
+          onClick={handleConnectOrSyncCloud}
+          className={`w-full px-3 py-2 rounded-lg border text-xs font-medium flex items-center justify-center gap-1.5 transition-colors ${
+            cloudUser
+              ? 'border-emerald-200 bg-emerald-50 text-emerald-900 hover:bg-emerald-100'
+              : 'border-indigo-200 bg-indigo-50 text-indigo-900 hover:bg-indigo-100'
+          }`}
+        >
+          <Cloud className="w-3.5 h-3.5 shrink-0" />
+          <span className="truncate">
+            {cloudSyncing
+              ? isEn
+                ? 'Syncing Cloud...'
+                : 'Đang đồng bộ Cloud...'
+              : cloudUser
+                ? isEn
+                  ? 'Firebase Cloud Connected · Sync'
+                  : 'Đã lưu Cloud · Đồng bộ ngay'
+                : isEn
+                  ? 'Connect Google Cloud Sync'
+                  : 'Kết nối Cloud (Lưu dữ liệu)'}
+          </span>
+        </button>
+
         <div className="flex items-center justify-between gap-2 text-xs">
           <div className="min-w-0">
             <div className="font-semibold text-slate-900 truncate">{currentAccount.fullName}</div>
